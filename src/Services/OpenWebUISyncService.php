@@ -827,8 +827,27 @@ class OpenWebUISyncService
             return null;
         }
 
-        $searchResults = $this->client->searchFilesByFilename($filename);
-        $knowledgeResults = $this->listKnowledgeFiles($knowledgeId, ['query' => $filename]);
+        $searchResults = [];
+        $knowledgeResults = [];
+
+        try {
+            $searchResults = $this->client->searchFilesByFilename($filename);
+        } catch (RequestException $e) {
+            Log::channel($this->resolveLogChannel())->warning('OpenWebUI file search failed', [
+                'filename' => $filename,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        try {
+            $knowledgeResults = $this->listKnowledgeFiles($knowledgeId, ['query' => $filename]);
+        } catch (RequestException $e) {
+            Log::channel($this->resolveLogChannel())->warning('OpenWebUI knowledge file list failed', [
+                'knowledge_id' => $knowledgeId,
+                'filename' => $filename,
+                'error' => $e->getMessage(),
+            ]);
+        }
 
         $knowledgeIds = [];
         foreach ($knowledgeResults as $file) {
