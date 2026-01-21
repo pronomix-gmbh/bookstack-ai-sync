@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pronomix\BookStackOpenWebUISync\Services;
 
 use Carbon\CarbonInterface;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use Pronomix\BookStackOpenWebUISync\Jobs\ProcessSyncTaskJob;
@@ -20,6 +21,7 @@ class OpenWebUISyncService
     public const TASK_DELETE_ATTACHMENT = 'delete_attachment';
     public const TASK_ENSURE_BOOK = 'ensure_book_knowledge';
     public const TASK_REBUILD_BOOK = 'rebuild_book';
+    public const TASK_DELETE_BOOK = 'delete_book';
     public const TASK_POLL_CHANGES = 'poll_changes';
 
     public function __construct(
@@ -210,6 +212,9 @@ class OpenWebUISyncService
         }
 
         [$stream] = $this->bookStack->resolveAttachmentStream($attachment);
+        if (is_string($stream) && $extension === '') {
+            $filename .= '.md';
+        }
 
         try {
             $upload = $this->client->uploadFile($filename, $stream);
@@ -255,6 +260,35 @@ class OpenWebUISyncService
         $mapping->delete();
     }
 
+    public function deleteBook(int $bookId): void
+    {
+        $knowledgeMap = OpenWebUIKnowledgeMap::query()->where('book_id', $bookId)->first();
+        $knowledgeId = $knowledgeMap?->knowledge_id;
+
+        $fileMappings = OpenWebUIFileMap::query()->where('book_id', $bookId)->get();
+        foreach ($fileMappings as $mapping) {
+            if ($mapping->openwebui_file_id) {
+                $this->deleteRemoteFileQuietly($mapping->openwebui_file_id);
+            }
+        }
+
+        if ($knowledgeId) {
+            try {
+                $this->client->deleteKnowledge($knowledgeId);
+            } catch (RequestException $e) {
+                $status = $e->response?->status();
+                if ($status !== 404) {
+                    throw $e;
+                }
+            }
+        }
+
+        OpenWebUIFileMap::query()->where('book_id', $bookId)->delete();
+        if ($knowledgeMap) {
+            $knowledgeMap->delete();
+        }
+    }
+
     public function rebuildBook(int $bookId): void
     {
         $knowledgeMap = $this->ensureKnowledgeForBook($bookId);
@@ -296,15 +330,20 @@ class OpenWebUISyncService
             }
         }
 
-        if (class_exists('BookStack\\Entities\\Models\\Attachment')) {
-            $attachments = \BookStack\Entities\Models\Attachment::query()
+        foreach (['BookStack\\Uploads\\Attachment', 'BookStack\\Entities\\Models\\Attachment'] as $attachmentClass) {
+            if (!class_exists($attachmentClass)) {
+                continue;
+            }
+
+            $attachments = $attachmentClass::query()
                 ->where('updated_at', '>', $lastSeen)
                 ->orderBy('updated_at')
                 ->get();
 
             foreach ($attachments as $attachment) {
-                $this->enqueueTask(self::TASK_UPSERT_ATTACHMENT, ['attachment_id' => $attachment->id, 'book_id' => $attachment->book_id]);
+                $this->enqueueTask(self::TASK_UPSERT_ATTACHMENT, ['attachment_id' => $attachment->id, 'book_id' => $attachment->book_id ?? null]);
             }
+            break;
         }
 
         $this->settings->set('poll_last_seen', now()->toDateTimeString());
@@ -373,6 +412,11 @@ class OpenWebUISyncService
             case self::TASK_REBUILD_BOOK:
                 if ($task->book_id) {
                     $this->rebuildBook((int) $task->book_id);
+                }
+                return;
+            case self::TASK_DELETE_BOOK:
+                if ($task->book_id) {
+                    $this->deleteBook((int) $task->book_id);
                 }
                 return;
             case self::TASK_POLL_CHANGES:

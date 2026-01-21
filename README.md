@@ -67,6 +67,12 @@ Optional queue workers can be enabled by setting:
 OPENWEBUI_QUEUE_DISPATCH=true
 ```
 
+To prevent overlapping runs (e.g., if a queue run takes longer than a minute), use `flock` in your cron:
+
+```bash
+* * * * * flock -n /tmp/openwebui-queue.lock php /path/to/bookstack/artisan openwebui:process-queue >> /dev/null 2>&1
+```
+
 ## Commands
 
 - `openwebui:process-queue` - Process pending sync tasks

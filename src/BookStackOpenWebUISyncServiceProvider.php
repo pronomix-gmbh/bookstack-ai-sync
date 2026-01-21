@@ -14,6 +14,7 @@ use Pronomix\BookStackOpenWebUISync\Console\Commands\SyncBookCommand;
 use Pronomix\BookStackOpenWebUISync\Console\Commands\TestConnectionCommand;
 use Pronomix\BookStackOpenWebUISync\Console\Commands\UninstallCommand;
 use Pronomix\BookStackOpenWebUISync\Http\Middleware\AdminMiddleware;
+use Pronomix\BookStackOpenWebUISync\Observers\BookObserver;
 use Pronomix\BookStackOpenWebUISync\Observers\AttachmentObserver;
 use Pronomix\BookStackOpenWebUISync\Observers\PageObserver;
 
@@ -57,12 +58,19 @@ class BookStackOpenWebUISyncServiceProvider extends ServiceProvider
 
     protected function registerObservers(): void
     {
+        if (class_exists('BookStack\\Entities\\Models\\Book')) {
+            \BookStack\Entities\Models\Book::observe(BookObserver::class);
+        }
+
         if (class_exists('BookStack\\Entities\\Models\\Page')) {
             \BookStack\Entities\Models\Page::observe(PageObserver::class);
         }
 
-        if (class_exists('BookStack\\Entities\\Models\\Attachment')) {
-            \BookStack\Entities\Models\Attachment::observe(AttachmentObserver::class);
+        foreach (['BookStack\\Uploads\\Attachment', 'BookStack\\Entities\\Models\\Attachment'] as $class) {
+            if (class_exists($class)) {
+                $class::observe(AttachmentObserver::class);
+                break;
+            }
         }
     }
 }

@@ -10,6 +10,11 @@ use Illuminate\Support\Str;
 
 class BookStackRepository
 {
+    private const ATTACHMENT_MODEL_CLASSES = [
+        'BookStack\\Uploads\\Attachment',
+        'BookStack\\Entities\\Models\\Attachment',
+    ];
+
     public function getBookById(int $bookId): mixed
     {
         if (!class_exists('BookStack\\Entities\\Models\\Book')) {
@@ -30,11 +35,12 @@ class BookStackRepository
 
     public function getAttachmentById(int $attachmentId): mixed
     {
-        if (!class_exists('BookStack\\Entities\\Models\\Attachment')) {
+        $attachmentClass = $this->attachmentModelClass();
+        if (!$attachmentClass) {
             return null;
         }
 
-        return \BookStack\Entities\Models\Attachment::query()->find($attachmentId);
+        return $attachmentClass::query()->find($attachmentId);
     }
 
     public function listBooks(): array
@@ -61,14 +67,15 @@ class BookStackRepository
 
     public function listAttachmentsForBook(int $bookId): array
     {
-        if (!class_exists('BookStack\\Entities\\Models\\Attachment')) {
+        $attachmentClass = $this->attachmentModelClass();
+        if (!$attachmentClass) {
             return [];
         }
 
-        $attachmentModel = new \BookStack\Entities\Models\Attachment();
+        $attachmentModel = new $attachmentClass();
         $table = $attachmentModel->getTable();
 
-        $query = \BookStack\Entities\Models\Attachment::query();
+        $query = $attachmentClass::query();
 
         if (Schema::hasColumn($table, 'book_id')) {
             $query->where('book_id', $bookId);
@@ -91,14 +98,30 @@ class BookStackRepository
 
     public function getPageBody(mixed $page): string
     {
-        foreach (['markdown', 'text', 'html'] as $field) {
-            if (isset($page->{$field}) && is_string($page->{$field})) {
-                return $page->{$field};
+        $body = $this->extractStringField($page, ['markdown', 'text', 'html', 'body', 'content']);
+        if ($body !== '') {
+            return $body;
+        }
+
+        foreach (['relatedData', 'pageData'] as $relation) {
+            $related = $this->loadRelationIfExists($page, $relation);
+            if ($related) {
+                $body = $this->extractStringField($related, ['markdown', 'text', 'html', 'body', 'content']);
+                if ($body !== '') {
+                    return $body;
+                }
             }
         }
 
-        if (method_exists($page, 'getText')) {
-            return (string) $page->getText();
+        foreach (['getMarkdown', 'getRawMarkdown', 'getText', 'getHtml', 'getContent'] as $method) {
+            if (!method_exists($page, $method)) {
+                continue;
+            }
+            $value = $page->{$method}();
+            $body = $this->stringifyValue($value);
+            if ($body !== '') {
+                return $body;
+            }
         }
 
         return '';
@@ -127,9 +150,11 @@ class BookStackRepository
             return $this->getBookById((int) $attachment->book_id);
         }
 
-        if (isset($attachment->page)) {
+        if (method_exists($attachment, 'page')) {
             $page = $attachment->page;
-            return $page->book ?? $this->getBookById((int) ($page->book_id ?? 0));
+            if ($page) {
+                return $page->book ?? $this->getBookById((int) ($page->book_id ?? 0));
+            }
         }
 
         if (isset($attachment->uploaded_to) && class_exists('BookStack\\Entities\\Models\\Page')) {
@@ -149,8 +174,17 @@ class BookStackRepository
             return [$stream, $this->attachmentFilename($attachment)];
         }
 
-        $disk = $attachment->disk ?? config('filesystems.default');
         $path = $attachment->path ?? $attachment->file_path ?? null;
+
+        if ($this->isExternalAttachment($attachment, $path)) {
+            $content = $this->externalAttachmentMarkdown($attachment, $path);
+            return [$content, $this->attachmentFilename($attachment)];
+        }
+
+        $disk = $attachment->disk ?? null;
+        if (!$disk) {
+            $disk = config('filesystems.disks.uploads') ? 'uploads' : config('filesystems.default');
+        }
 
         if (!$path && method_exists($attachment, 'getFilePath')) {
             $path = $attachment->getFilePath();
@@ -176,6 +210,10 @@ class BookStackRepository
 
     public function attachmentFilename(mixed $attachment): string
     {
+        if (method_exists($attachment, 'getFileName')) {
+            return (string) $attachment->getFileName();
+        }
+
         foreach (['name', 'filename', 'original_name'] as $field) {
             if (isset($attachment->{$field}) && is_string($attachment->{$field})) {
                 return $attachment->{$field};
@@ -183,5 +221,100 @@ class BookStackRepository
         }
 
         return 'attachment';
+    }
+
+    private function attachmentModelClass(): ?string
+    {
+        foreach (self::ATTACHMENT_MODEL_CLASSES as $class) {
+            if (class_exists($class)) {
+                return $class;
+            }
+        }
+
+        return null;
+    }
+
+    private function loadRelationIfExists(mixed $model, string $relation): mixed
+    {
+        if (!is_object($model) || !method_exists($model, $relation)) {
+            return null;
+        }
+
+        if (method_exists($model, 'relationLoaded') && $model->relationLoaded($relation)) {
+            return $model->{$relation};
+        }
+
+        if (method_exists($model, 'load')) {
+            try {
+                $model->load($relation);
+            } catch (\Throwable) {
+                return null;
+            }
+        }
+
+        return $model->{$relation} ?? null;
+    }
+
+    private function extractStringField(mixed $source, array $fields): string
+    {
+        foreach ($fields as $field) {
+            if (!is_object($source) || !isset($source->{$field})) {
+                continue;
+            }
+            $value = $source->{$field};
+            $string = $this->stringifyValue($value);
+            if ($string !== '') {
+                return $string;
+            }
+        }
+
+        return '';
+    }
+
+    private function stringifyValue(mixed $value): string
+    {
+        if ($value === null) {
+            return '';
+        }
+
+        if (is_string($value)) {
+            return $value;
+        }
+
+        if (is_object($value) && method_exists($value, '__toString')) {
+            return (string) $value;
+        }
+
+        return '';
+    }
+
+    private function isExternalAttachment(mixed $attachment, mixed $path): bool
+    {
+        if (isset($attachment->external) && $attachment->external) {
+            return true;
+        }
+
+        return is_string($path) && Str::startsWith($path, ['http://', 'https://']);
+    }
+
+    private function externalAttachmentMarkdown(mixed $attachment, mixed $path): string
+    {
+        $name = $this->attachmentFilename($attachment);
+        $url = '';
+
+        if (method_exists($attachment, 'getUrl')) {
+            $url = (string) $attachment->getUrl();
+        } elseif (is_string($path)) {
+            $url = $path;
+        }
+
+        $link = $url !== '' ? '[' . $name . '](' . $url . ')' : $name;
+
+        return implode("\n", [
+            '# Attachment',
+            '',
+            $link,
+            '',
+        ]);
     }
 }
