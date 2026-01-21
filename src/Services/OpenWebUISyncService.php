@@ -723,16 +723,11 @@ class OpenWebUISyncService
         }
 
         $status = $response->status();
-        if ($status === 404) {
+        if ($status === 404 || $status === 400) {
             return true;
         }
 
-        if ($status !== 400) {
-            return false;
-        }
-
-        $body = strtolower((string) $response->body());
-        return str_contains($body, 'could not find') || str_contains($body, 'not found');
+        return false;
     }
 
     private function handleDuplicateUpload(
