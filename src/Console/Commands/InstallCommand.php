@@ -9,8 +9,8 @@ use Illuminate\Support\Str;
 
 class InstallCommand extends Command
 {
-    protected $signature = 'openwebui:install {--publish-config} {--publish-views}';
-    protected $description = 'Install OpenWebUI sync tables and optional assets.';
+    protected $signature = 'openwebui:install';
+    protected $description = 'Install OpenWebUI sync tables.';
 
     public function handle(): int
     {
@@ -20,20 +20,6 @@ class InstallCommand extends Command
             '--path' => $path,
             '--force' => true,
         ]);
-
-        if ($this->option('publish-config')) {
-            $this->call('vendor:publish', [
-                '--tag' => 'bookstack-openwebui-config',
-                '--force' => true,
-            ]);
-        }
-
-        if ($this->option('publish-views')) {
-            $this->call('vendor:publish', [
-                '--tag' => 'bookstack-openwebui-views',
-                '--force' => true,
-            ]);
-        }
 
         $this->info('OpenWebUI sync installed.');
 

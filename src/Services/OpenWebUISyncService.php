@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Pronomix\BookStackOpenWebUISync\Services;
 
-use Carbon\CarbonInterface;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
@@ -24,10 +23,8 @@ class OpenWebUISyncService
     public const TASK_ENSURE_BOOK = 'ensure_book_knowledge';
     public const TASK_REBUILD_BOOK = 'rebuild_book';
     public const TASK_DELETE_BOOK = 'delete_book';
-    public const TASK_POLL_CHANGES = 'poll_changes';
 
     public function __construct(
-        private readonly SettingsRepository $settings,
         private readonly BookStackRepository $bookStack,
         private readonly OpenWebUIClient $client
     ) {
@@ -35,39 +32,30 @@ class OpenWebUISyncService
 
     public function isEnabled(): bool
     {
-        return (bool) $this->settings->get('enabled', config('bookstack-openwebui.enabled'));
+        return (bool) config('bookstack-openwebui.enabled');
     }
 
     public function instanceName(): string
     {
-        $value = $this->settings->get('instance_name', config('bookstack-openwebui.instance_name'));
+        $value = config('bookstack-openwebui.instance_name');
         return $value ? (string) $value : 'bookstack';
     }
 
     public function workspaceEnabled(): bool
     {
-        return (bool) $this->settings->get(
-            'workspace_enabled',
-            config('bookstack-openwebui.workspace.enabled', true)
-        );
+        return (bool) config('bookstack-openwebui.workspace.enabled', true);
     }
 
     public function workspaceModelId(): string
     {
-        $value = (string) $this->settings->get(
-            'workspace_model_id',
-            config('bookstack-openwebui.workspace.model_id', '')
-        );
+        $value = (string) config('bookstack-openwebui.workspace.model_id', '');
 
         return $value !== '' ? $value : $this->instanceName();
     }
 
     public function workspaceModelName(): string
     {
-        $value = (string) $this->settings->get(
-            'workspace_model_name',
-            config('bookstack-openwebui.workspace.model_name', '')
-        );
+        $value = (string) config('bookstack-openwebui.workspace.model_name', '');
 
         return $value !== '' ? $value : $this->instanceName();
     }
@@ -442,57 +430,11 @@ class OpenWebUISyncService
         }
     }
 
-    public function pollChanges(): void
-    {
-        $last = $this->settings->get('poll_last_seen', null);
-        $lastSeen = $last ? new \Carbon\Carbon($last) : now()->subMinutes(10);
-
-        if (class_exists('BookStack\\Entities\\Models\\Page')) {
-            $pages = \BookStack\Entities\Models\Page::query()
-                ->where('updated_at', '>', $lastSeen)
-                ->orderBy('updated_at')
-                ->get();
-
-            foreach ($pages as $page) {
-                $this->enqueueTask(self::TASK_UPSERT_PAGE, ['page_id' => $page->id, 'book_id' => $page->book_id]);
-            }
-        }
-
-        foreach (['BookStack\\Uploads\\Attachment', 'BookStack\\Entities\\Models\\Attachment'] as $attachmentClass) {
-            if (!class_exists($attachmentClass)) {
-                continue;
-            }
-
-            $attachments = $attachmentClass::query()
-                ->where('updated_at', '>', $lastSeen)
-                ->orderBy('updated_at')
-                ->get();
-
-            foreach ($attachments as $attachment) {
-                $this->enqueueTask(self::TASK_UPSERT_ATTACHMENT, ['attachment_id' => $attachment->id, 'book_id' => $attachment->book_id ?? null]);
-            }
-            break;
-        }
-
-        if (class_exists('BookStack\\Uploads\\Image')) {
-            $images = \BookStack\Uploads\Image::query()
-                ->where('updated_at', '>', $lastSeen)
-                ->orderBy('updated_at')
-                ->get();
-
-            foreach ($images as $image) {
-                $this->enqueueTask(self::TASK_UPSERT_IMAGE, ['image_id' => $image->id]);
-            }
-        }
-
-        $this->settings->set('poll_last_seen', now()->toDateTimeString());
-    }
-
     public function enqueueTask(string $type, array $payload = []): OpenWebUISyncTask
     {
         $task = OpenWebUISyncTask::enqueue(array_merge(['task_type' => $type], $payload));
 
-        $dispatch = (bool) $this->settings->get('queue_dispatch', config('bookstack-openwebui.queue.dispatch_jobs'));
+        $dispatch = (bool) config('bookstack-openwebui.queue.dispatch_jobs');
         if ($dispatch) {
             ProcessSyncTaskJob::dispatch($task->id);
         }
@@ -576,8 +518,8 @@ class OpenWebUISyncService
                     $this->deleteBook((int) $task->book_id);
                 }
                 return;
-            case self::TASK_POLL_CHANGES:
-                $this->pollChanges();
+            case 'poll_changes':
+                // Legacy no-op for removed polling tasks.
                 return;
             default:
                 throw new \RuntimeException('Unknown task type: ' . $task->task_type);
@@ -604,25 +546,6 @@ class OpenWebUISyncService
             $body,
             '',
         ]);
-    }
-
-    public function shouldPoll(CarbonInterface $now): bool
-    {
-        $enabled = (bool) $this->settings->get('polling_enabled', config('bookstack-openwebui.polling.enabled'));
-        if (!$enabled) {
-            return false;
-        }
-
-        $interval = (int) $this->settings->get('polling_interval_minutes', config('bookstack-openwebui.polling.interval_minutes'));
-        $last = $this->settings->get('poll_last_seen', null);
-
-        if (!$last) {
-            return true;
-        }
-
-        $lastSeen = new \Carbon\Carbon($last);
-
-        return $lastSeen->addMinutes($interval)->lessThanOrEqualTo($now);
     }
 
     private function deleteRemoteFileQuietly(string $fileId): void

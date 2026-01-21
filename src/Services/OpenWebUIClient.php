@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Http;
 
 class OpenWebUIClient
 {
-    public function __construct(private readonly SettingsRepository $settings)
+    public function __construct()
     {
     }
 
@@ -161,10 +161,10 @@ class OpenWebUIClient
 
     private function request(): PendingRequest
     {
-        $baseUrl = (string) $this->settings->get('base_url', config('bookstack-openwebui.openwebui.base_url'));
-        $apiKey = (string) $this->settings->get('api_key', config('bookstack-openwebui.openwebui.api_key'), true);
-        $timeout = (int) $this->settings->get('timeout', config('bookstack-openwebui.openwebui.timeout'));
-        $verify = (bool) $this->settings->get('verify_tls', config('bookstack-openwebui.openwebui.verify_tls'));
+        $baseUrl = (string) config('bookstack-openwebui.openwebui.base_url');
+        $apiKey = (string) config('bookstack-openwebui.openwebui.api_key');
+        $timeout = (int) config('bookstack-openwebui.openwebui.timeout');
+        $verify = (bool) config('bookstack-openwebui.openwebui.verify_tls');
 
         if ($baseUrl === '') {
             throw new \RuntimeException('OpenWebUI base URL is not configured');

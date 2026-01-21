@@ -8,14 +8,12 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
-use Pronomix\BookStackOpenWebUISync\Services\SettingsRepository;
-
 class UninstallCommand extends Command
 {
-    protected $signature = 'openwebui:uninstall {--force : Run without confirmation} {--drop : Skip migrate:rollback and drop tables directly} {--purge-settings : Remove stored settings keys}';
+    protected $signature = 'openwebui:uninstall {--force : Run without confirmation} {--drop : Skip migrate:rollback and drop tables directly}';
     protected $description = 'Uninstall OpenWebUI sync tables and metadata.';
 
-    public function handle(SettingsRepository $settings): int
+    public function handle(): int
     {
         if (!$this->option('force')) {
             $confirmed = $this->confirm('This will remove OpenWebUI sync tables and data. Continue?', false);
@@ -42,23 +40,6 @@ class UninstallCommand extends Command
         foreach (['openwebui_knowledge_map', 'openwebui_file_map', 'openwebui_sync_tasks', 'openwebui_settings'] as $table) {
             if (Schema::hasTable($table)) {
                 Schema::drop($table);
-            }
-        }
-
-        if ($this->option('purge-settings')) {
-            foreach ([
-                'enabled',
-                'instance_name',
-                'base_url',
-                'api_key',
-                'timeout',
-                'verify_tls',
-                'polling_enabled',
-                'polling_interval_minutes',
-                'poll_last_seen',
-                'queue_dispatch',
-            ] as $key) {
-                $settings->delete($key);
             }
         }
 

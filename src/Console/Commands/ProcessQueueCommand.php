@@ -27,10 +27,6 @@ class ProcessQueueCommand extends Command
         $limit = $limit > 0 ? $limit : 25;
         $channel = config('bookstack-openwebui.log_channel') ?? config('logging.default');
 
-        if ($sync->shouldPoll(now())) {
-            $sync->enqueueTask(OpenWebUISyncService::TASK_POLL_CHANGES);
-        }
-
         $tasks = OpenWebUISyncTask::query()->ready()->orderBy('available_at')->limit($limit)->get();
         $pendingCount = OpenWebUISyncTask::query()->where('status', OpenWebUISyncTask::STATUS_PENDING)->count();
 

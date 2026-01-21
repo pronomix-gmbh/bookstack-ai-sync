@@ -8,18 +8,6 @@ A composer-installable BookStack package to sync BookStack books, pages, and att
 composer require pronomix-gmbh/bookstack-ai-sync
 ```
 
-Publish config (optional):
-
-```bash
-php artisan vendor:publish --tag=bookstack-openwebui-config
-```
-
-Publish views (optional):
-
-```bash
-php artisan vendor:publish --tag=bookstack-openwebui-views
-```
-
 Run migrations:
 
 ```bash
@@ -43,20 +31,14 @@ OPENWEBUI_BASE_URL=https://openwebui.example.com
 OPENWEBUI_API_KEY=your-api-key
 OPENWEBUI_TIMEOUT=30
 OPENWEBUI_VERIFY_TLS=true
-OPENWEBUI_POLL_ENABLED=true
-OPENWEBUI_POLL_INTERVAL=5
 OPENWEBUI_WORKSPACE_ENABLED=true
 OPENWEBUI_WORKSPACE_MODEL_ID=
 OPENWEBUI_WORKSPACE_MODEL_NAME=
 ```
 
-You can also configure these in the admin UI:
-
-- `Settings` → `OpenWebUI Sync`
-
 ## Scheduler / Queue
 
-This package stores tasks in the database and does not require a queue worker. To process tasks via cron:
+This package stores tasks in the database and does not require a queue worker. The cron job is required: without it, tasks never run and no sync happens. To process tasks via cron:
 
 ```bash
 * * * * * php /path/to/bookstack/artisan openwebui:process-queue >> /dev/null 2>&1
@@ -89,12 +71,12 @@ OPENWEBUI_WORKSPACE_MODEL_NAME=BookStack
 ## Commands
 
 - `openwebui:process-queue` - Process pending sync tasks
+- `openwebui:list-queue` - List open sync tasks
 - `openwebui:sync-all` - Enqueue sync for all books
-- `openwebui:sync-book {bookId}` - Enqueue sync for a single book
-- `openwebui:rebuild-book {bookId}` - Rebuild a single book (delete & re-upload)
+- `openwebui:sync-book {bookId?}` - Enqueue sync for a single book (prompts when omitted)
 - `openwebui:test-connection` - Test OpenWebUI connectivity
 - `openwebui:clear-queue` - Clear queued sync tasks (defaults to pending/failed)
-- `openwebui:install` - Run only this package's migrations (optional publish flags)
+- `openwebui:install` - Run only this package's migrations
 - `openwebui:uninstall` - Roll back and remove package tables (with safety flags)
 
 ## Behavior
@@ -104,12 +86,6 @@ OPENWEBUI_WORKSPACE_MODEL_NAME=BookStack
 - Identity is stable across page renames by using `page_id` and `attachment_id` in external keys.
 - Deletes are propagated to OpenWebUI.
 - Optional workspace sync attaches all known knowledge bases to a single OpenWebUI model (workspace) and removes stale ones.
-
-## Admin UI
-
-- Admin-only settings page
-- Test connection, sync all, sync book, rebuild book
-- Queue status and recent failures
 
 ## Development
 
