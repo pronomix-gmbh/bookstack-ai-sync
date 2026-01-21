@@ -21,17 +21,26 @@ class OpenWebUIClient
 
         $data = $response->json();
 
-        if (is_array($data)) {
-            return $data;
+        if (!is_array($data)) {
+            return [];
         }
 
-        return [];
+        if (Arr::has($data, 'items') && is_array($data['items'])) {
+            return $data['items'];
+        }
+
+        if (Arr::has($data, 'data') && is_array($data['data'])) {
+            return $data['data'];
+        }
+
+        return $data;
     }
 
-    public function createKnowledge(string $name): array
+    public function createKnowledge(string $name, ?string $description = null): array
     {
         $response = $this->request()->post($this->path('knowledge_create'), [
             'name' => $name,
+            'description' => $description ?? $name,
         ]);
         $response->throw();
 

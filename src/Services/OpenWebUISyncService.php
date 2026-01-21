@@ -45,6 +45,12 @@ class OpenWebUISyncService
         return $this->instanceName() . ':' . (string) ($book->name ?? 'book');
     }
 
+    public function knowledgeDescriptionForBook(mixed $book): string
+    {
+        $bookName = (string) ($book->name ?? 'book');
+        return 'BookStack book "' . $bookName . '" from ' . $this->instanceName();
+    }
+
     public function externalKeyForPage(string $bookSlug, int $pageId): string
     {
         return $this->instanceName() . ':' . $bookSlug . ':page:' . $pageId;
@@ -77,7 +83,7 @@ class OpenWebUISyncService
         $knowledge = $this->findKnowledge($mapping?->knowledge_id, $expectedName);
 
         if (!$knowledge) {
-            $created = $this->client->createKnowledge($expectedName);
+            $created = $this->client->createKnowledge($expectedName, $this->knowledgeDescriptionForBook($book));
             $knowledgeId = $this->client->extractId($created);
             if (!$knowledgeId) {
                 throw new \RuntimeException('OpenWebUI did not return a knowledge ID');
@@ -454,6 +460,10 @@ class OpenWebUISyncService
 
     private function normalizeKnowledgeList(array $list): array
     {
+        if (Arr::has($list, 'items') && is_array($list['items'])) {
+            return $list['items'];
+        }
+
         if (Arr::has($list, 'data') && is_array($list['data'])) {
             return $list['data'];
         }
