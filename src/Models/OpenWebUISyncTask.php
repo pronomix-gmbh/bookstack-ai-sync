@@ -23,6 +23,7 @@ class OpenWebUISyncTask extends Model
         'book_id',
         'page_id',
         'attachment_id',
+        'image_id',
         'status',
         'attempts',
         'available_at',
@@ -45,7 +46,7 @@ class OpenWebUISyncTask extends Model
 
         $query = self::query()->where('task_type', $attributes['task_type']);
 
-        foreach (['book_id', 'page_id', 'attachment_id'] as $key) {
+        foreach (['book_id', 'page_id', 'attachment_id', 'image_id'] as $key) {
             if (array_key_exists($key, $attributes)) {
                 $query->where($key, $attributes[$key]);
             } else {

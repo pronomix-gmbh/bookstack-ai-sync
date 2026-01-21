@@ -19,6 +19,8 @@ class OpenWebUISyncService
     public const TASK_DELETE_PAGE = 'delete_page';
     public const TASK_UPSERT_ATTACHMENT = 'upsert_attachment';
     public const TASK_DELETE_ATTACHMENT = 'delete_attachment';
+    public const TASK_UPSERT_IMAGE = 'upsert_image';
+    public const TASK_DELETE_IMAGE = 'delete_image';
     public const TASK_ENSURE_BOOK = 'ensure_book_knowledge';
     public const TASK_REBUILD_BOOK = 'rebuild_book';
     public const TASK_DELETE_BOOK = 'delete_book';
@@ -89,6 +91,11 @@ class OpenWebUISyncService
     public function externalKeyForAttachment(string $bookSlug, int $attachmentId): string
     {
         return $this->instanceName() . ':' . $bookSlug . ':attachment:' . $attachmentId;
+    }
+
+    public function externalKeyForImage(string $bookSlug, int $imageId): string
+    {
+        return $this->instanceName() . ':' . $bookSlug . ':image:' . $imageId;
     }
 
     public function sanitizeFilename(string $value): string
@@ -277,11 +284,91 @@ class OpenWebUISyncService
         $mapping->save();
     }
 
+    public function upsertImage(int $imageId): void
+    {
+        $image = $this->bookStack->getImageById($imageId);
+
+        if (!$image) {
+            $this->deleteImage($imageId);
+            return;
+        }
+
+        $book = $this->bookStack->resolveBookForImage($image);
+        if (!$book) {
+            return;
+        }
+
+        $knowledgeMap = $this->ensureKnowledgeForBook((int) $book->id);
+        if (!$knowledgeMap) {
+            return;
+        }
+
+        $bookSlug = $book->slug ?? ('book-' . $book->id);
+        $externalKey = $this->externalKeyForImage((string) $bookSlug, (int) $image->id);
+        $originalName = $this->bookStack->imageFilename($image);
+        $extension = pathinfo($originalName, PATHINFO_EXTENSION);
+        $filename = $this->sanitizeFilename($externalKey) . ($extension ? '.' . $extension : '');
+
+        $existing = OpenWebUIFileMap::query()
+            ->where('entity_type', 'image')
+            ->where('entity_id', $image->id)
+            ->first();
+
+        if ($existing && $existing->openwebui_file_id) {
+            $this->deleteRemoteFileQuietly($existing->openwebui_file_id);
+        }
+
+        [$stream] = $this->bookStack->resolveImageStream($image);
+
+        try {
+            $upload = $this->client->uploadFile($filename, $stream);
+        } finally {
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+        }
+
+        $fileId = $this->client->extractId($upload);
+        if (!$fileId) {
+            throw new \RuntimeException('OpenWebUI did not return a file ID');
+        }
+
+        $this->client->addFileToKnowledge($knowledgeMap->knowledge_id, $fileId);
+
+        $mapping = $existing ?? new OpenWebUIFileMap();
+        $mapping->entity_type = 'image';
+        $mapping->entity_id = $image->id;
+        $mapping->book_id = $book->id;
+        $mapping->knowledge_id = $knowledgeMap->knowledge_id;
+        $mapping->openwebui_file_id = $fileId;
+        $mapping->openwebui_filename = $filename;
+        $mapping->external_key = $externalKey;
+        $mapping->save();
+    }
+
     public function deleteAttachment(int $attachmentId): void
     {
         $mapping = OpenWebUIFileMap::query()
             ->where('entity_type', 'attachment')
             ->where('entity_id', $attachmentId)
+            ->first();
+
+        if (!$mapping) {
+            return;
+        }
+
+        if ($mapping->openwebui_file_id) {
+            $this->deleteRemoteFileQuietly($mapping->openwebui_file_id);
+        }
+
+        $mapping->delete();
+    }
+
+    public function deleteImage(int $imageId): void
+    {
+        $mapping = OpenWebUIFileMap::query()
+            ->where('entity_type', 'image')
+            ->where('entity_id', $imageId)
             ->first();
 
         if (!$mapping) {
@@ -349,6 +436,10 @@ class OpenWebUISyncService
         foreach ($this->bookStack->listAttachmentsForBook($bookId) as $attachment) {
             $this->enqueueTask(self::TASK_UPSERT_ATTACHMENT, ['attachment_id' => $attachment->id, 'book_id' => $bookId]);
         }
+
+        foreach ($this->bookStack->listImagesForBook($bookId) as $image) {
+            $this->enqueueTask(self::TASK_UPSERT_IMAGE, ['image_id' => $image->id, 'book_id' => $bookId]);
+        }
     }
 
     public function pollChanges(): void
@@ -381,6 +472,17 @@ class OpenWebUISyncService
                 $this->enqueueTask(self::TASK_UPSERT_ATTACHMENT, ['attachment_id' => $attachment->id, 'book_id' => $attachment->book_id ?? null]);
             }
             break;
+        }
+
+        if (class_exists('BookStack\\Uploads\\Image')) {
+            $images = \BookStack\Uploads\Image::query()
+                ->where('updated_at', '>', $lastSeen)
+                ->orderBy('updated_at')
+                ->get();
+
+            foreach ($images as $image) {
+                $this->enqueueTask(self::TASK_UPSERT_IMAGE, ['image_id' => $image->id]);
+            }
         }
 
         $this->settings->set('poll_last_seen', now()->toDateTimeString());
@@ -420,6 +522,10 @@ class OpenWebUISyncService
         foreach ($this->bookStack->listAttachmentsForBook($bookId) as $attachment) {
             $this->enqueueTask(self::TASK_UPSERT_ATTACHMENT, ['attachment_id' => $attachment->id, 'book_id' => $bookId]);
         }
+
+        foreach ($this->bookStack->listImagesForBook($bookId) as $image) {
+            $this->enqueueTask(self::TASK_UPSERT_IMAGE, ['image_id' => $image->id, 'book_id' => $bookId]);
+        }
     }
 
     public function handleTask(OpenWebUISyncTask $task): void
@@ -448,6 +554,16 @@ class OpenWebUISyncService
             case self::TASK_DELETE_ATTACHMENT:
                 if ($task->attachment_id) {
                     $this->deleteAttachment((int) $task->attachment_id);
+                }
+                return;
+            case self::TASK_UPSERT_IMAGE:
+                if ($task->image_id) {
+                    $this->upsertImage((int) $task->image_id);
+                }
+                return;
+            case self::TASK_DELETE_IMAGE:
+                if ($task->image_id) {
+                    $this->deleteImage((int) $task->image_id);
                 }
                 return;
             case self::TASK_REBUILD_BOOK:

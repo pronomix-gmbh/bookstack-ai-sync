@@ -17,6 +17,7 @@ use Pronomix\BookStackOpenWebUISync\Console\Commands\UninstallCommand;
 use Pronomix\BookStackOpenWebUISync\Http\Middleware\AdminMiddleware;
 use Pronomix\BookStackOpenWebUISync\Observers\BookObserver;
 use Pronomix\BookStackOpenWebUISync\Observers\AttachmentObserver;
+use Pronomix\BookStackOpenWebUISync\Observers\ImageObserver;
 use Pronomix\BookStackOpenWebUISync\Observers\PageObserver;
 
 class BookStackOpenWebUISyncServiceProvider extends ServiceProvider
@@ -73,6 +74,10 @@ class BookStackOpenWebUISyncServiceProvider extends ServiceProvider
                 $class::observe(AttachmentObserver::class);
                 break;
             }
+        }
+
+        if (class_exists('BookStack\\Uploads\\Image')) {
+            \BookStack\Uploads\Image::observe(ImageObserver::class);
         }
     }
 }

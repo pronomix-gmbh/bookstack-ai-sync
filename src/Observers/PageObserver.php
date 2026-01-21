@@ -22,6 +22,7 @@ class PageObserver
         ]);
 
         $this->enqueueAttachments($page, OpenWebUISyncService::TASK_UPSERT_ATTACHMENT);
+        $this->enqueueImages($page, OpenWebUISyncService::TASK_UPSERT_IMAGE);
     }
 
     public function deleting($page): void
@@ -32,6 +33,7 @@ class PageObserver
         }
 
         $this->enqueueAttachments($page, OpenWebUISyncService::TASK_DELETE_ATTACHMENT);
+        $this->enqueueImages($page, OpenWebUISyncService::TASK_DELETE_IMAGE);
     }
 
     public function deleted($page): void
@@ -47,6 +49,7 @@ class PageObserver
         ]);
 
         $this->enqueueAttachments($page, OpenWebUISyncService::TASK_DELETE_ATTACHMENT);
+        $this->enqueueImages($page, OpenWebUISyncService::TASK_DELETE_IMAGE);
     }
 
     private function enqueueAttachments(mixed $page, string $taskType): void
@@ -69,6 +72,30 @@ class PageObserver
             $sync->enqueueTask($taskType, [
                 'attachment_id' => $attachment->id,
                 'book_id' => $page->book_id ?? $attachment->book_id ?? null,
+            ]);
+        }
+    }
+
+    private function enqueueImages(mixed $page, string $taskType): void
+    {
+        if (!isset($page->id)) {
+            return;
+        }
+
+        $repo = app(BookStackRepository::class);
+        $images = $repo->listImagesForPage((int) $page->id);
+        if (!$images) {
+            return;
+        }
+
+        $sync = app(OpenWebUISyncService::class);
+        foreach ($images as $image) {
+            if (!isset($image->id)) {
+                continue;
+            }
+            $sync->enqueueTask($taskType, [
+                'image_id' => $image->id,
+                'book_id' => $page->book_id ?? null,
             ]);
         }
     }

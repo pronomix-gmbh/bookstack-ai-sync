@@ -14,6 +14,9 @@ class BookStackRepository
         'BookStack\\Uploads\\Attachment',
         'BookStack\\Entities\\Models\\Attachment',
     ];
+    private const IMAGE_MODEL_CLASSES = [
+        'BookStack\\Uploads\\Image',
+    ];
 
     public function getBookById(int $bookId): mixed
     {
@@ -41,6 +44,16 @@ class BookStackRepository
         }
 
         return $attachmentClass::query()->find($attachmentId);
+    }
+
+    public function getImageById(int $imageId): mixed
+    {
+        $imageClass = $this->imageModelClass();
+        if (!$imageClass) {
+            return null;
+        }
+
+        return $imageClass::query()->find($imageId);
     }
 
     public function listBooks(): array
@@ -96,6 +109,35 @@ class BookStackRepository
         return $query->orderBy('id')->get()->all();
     }
 
+    public function listImagesForBook(int $bookId): array
+    {
+        $imageClass = $this->imageModelClass();
+        if (!$imageClass || !class_exists('BookStack\\Entities\\Models\\Page')) {
+            return [];
+        }
+
+        $imageModel = new $imageClass();
+        $table = $imageModel->getTable();
+
+        if (!Schema::hasColumn($table, 'uploaded_to')) {
+            return [];
+        }
+
+        $pageIds = \BookStack\Entities\Models\Page::query()
+            ->where('book_id', $bookId)
+            ->pluck('id');
+
+        if ($pageIds->isEmpty()) {
+            return [];
+        }
+
+        return $imageClass::query()
+            ->whereIn('uploaded_to', $pageIds->all())
+            ->orderBy('id')
+            ->get()
+            ->all();
+    }
+
     public function listAttachmentsForPage(int $pageId): array
     {
         $attachmentClass = $this->attachmentModelClass();
@@ -117,6 +159,27 @@ class BookStackRepository
         }
 
         return $query->orderBy('id')->get()->all();
+    }
+
+    public function listImagesForPage(int $pageId): array
+    {
+        $imageClass = $this->imageModelClass();
+        if (!$imageClass) {
+            return [];
+        }
+
+        $imageModel = new $imageClass();
+        $table = $imageModel->getTable();
+
+        if (!Schema::hasColumn($table, 'uploaded_to')) {
+            return [];
+        }
+
+        return $imageClass::query()
+            ->where('uploaded_to', $pageId)
+            ->orderBy('id')
+            ->get()
+            ->all();
     }
 
     public function getPageBody(mixed $page): string
@@ -190,6 +253,33 @@ class BookStackRepository
         return null;
     }
 
+    public function resolveBookForImage(mixed $image): mixed
+    {
+        if (isset($image->book)) {
+            return $image->book;
+        }
+
+        if (isset($image->book_id)) {
+            return $this->getBookById((int) $image->book_id);
+        }
+
+        if (method_exists($image, 'getPage')) {
+            $page = $image->getPage();
+            if ($page) {
+                return $page->book ?? $this->getBookById((int) ($page->book_id ?? 0));
+            }
+        }
+
+        if (isset($image->uploaded_to) && class_exists('BookStack\\Entities\\Models\\Page')) {
+            $page = \BookStack\Entities\Models\Page::query()->find((int) $image->uploaded_to);
+            if ($page) {
+                return $page->book ?? $this->getBookById((int) $page->book_id);
+            }
+        }
+
+        return null;
+    }
+
     public function resolveAttachmentStream(mixed $attachment): array
     {
         if (method_exists($attachment, 'getStream')) {
@@ -231,6 +321,38 @@ class BookStackRepository
         return [$stream, basename($path)];
     }
 
+    public function resolveImageStream(mixed $image): array
+    {
+        $path = $image->path ?? null;
+        $filename = $this->imageFilename($image);
+
+        if (!$path) {
+            throw new \RuntimeException('Image path not found');
+        }
+
+        if (Str::startsWith($path, ['/', 'C:\\', 'D:\\'])) {
+            $stream = fopen($path, 'rb');
+            return [$stream, $filename];
+        }
+
+        $disk = $image->disk ?? null;
+        if (!$disk) {
+            $disk = config('filesystems.disks.uploads') ? 'uploads' : config('filesystems.default');
+        }
+
+        $stream = Storage::disk($disk)->readStream($path);
+
+        if (!$stream && isset($image->url) && is_string($image->url) && Str::startsWith($image->url, ['http://', 'https://'])) {
+            $stream = fopen($image->url, 'rb');
+        }
+
+        if (!$stream) {
+            throw new \RuntimeException('Unable to open image stream');
+        }
+
+        return [$stream, $filename];
+    }
+
     public function attachmentFilename(mixed $attachment): string
     {
         if (method_exists($attachment, 'getFileName')) {
@@ -246,9 +368,38 @@ class BookStackRepository
         return 'attachment';
     }
 
+    public function imageFilename(mixed $image): string
+    {
+        foreach (['name', 'filename'] as $field) {
+            if (isset($image->{$field}) && is_string($image->{$field}) && $image->{$field} !== '') {
+                return $image->{$field};
+            }
+        }
+
+        if (isset($image->path) && is_string($image->path)) {
+            $basename = basename($image->path);
+            if ($basename !== '') {
+                return $basename;
+            }
+        }
+
+        return 'image';
+    }
+
     private function attachmentModelClass(): ?string
     {
         foreach (self::ATTACHMENT_MODEL_CLASSES as $class) {
+            if (class_exists($class)) {
+                return $class;
+            }
+        }
+
+        return null;
+    }
+
+    private function imageModelClass(): ?string
+    {
+        foreach (self::IMAGE_MODEL_CLASSES as $class) {
             if (class_exists($class)) {
                 return $class;
             }
