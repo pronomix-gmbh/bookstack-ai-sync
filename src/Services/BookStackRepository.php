@@ -96,6 +96,29 @@ class BookStackRepository
         return $query->orderBy('id')->get()->all();
     }
 
+    public function listAttachmentsForPage(int $pageId): array
+    {
+        $attachmentClass = $this->attachmentModelClass();
+        if (!$attachmentClass) {
+            return [];
+        }
+
+        $attachmentModel = new $attachmentClass();
+        $table = $attachmentModel->getTable();
+
+        $query = $attachmentClass::query();
+
+        if (Schema::hasColumn($table, 'uploaded_to')) {
+            $query->where('uploaded_to', $pageId);
+        } elseif (Schema::hasColumn($table, 'page_id')) {
+            $query->where('page_id', $pageId);
+        } else {
+            return [];
+        }
+
+        return $query->orderBy('id')->get()->all();
+    }
+
     public function getPageBody(mixed $page): string
     {
         $body = $this->extractStringField($page, ['markdown', 'text', 'html', 'body', 'content']);

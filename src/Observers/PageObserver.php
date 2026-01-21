@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pronomix\BookStackOpenWebUISync\Observers;
 
+use Pronomix\BookStackOpenWebUISync\Services\BookStackRepository;
 use Pronomix\BookStackOpenWebUISync\Services\OpenWebUISyncService;
 
 class PageObserver
@@ -19,6 +20,18 @@ class PageObserver
             'page_id' => $page->id,
             'book_id' => $page->book_id ?? null,
         ]);
+
+        $this->enqueueAttachments($page, OpenWebUISyncService::TASK_UPSERT_ATTACHMENT);
+    }
+
+    public function deleting($page): void
+    {
+        $sync = app(OpenWebUISyncService::class);
+        if (!$sync->isEnabled()) {
+            return;
+        }
+
+        $this->enqueueAttachments($page, OpenWebUISyncService::TASK_DELETE_ATTACHMENT);
     }
 
     public function deleted($page): void
@@ -32,5 +45,31 @@ class PageObserver
             'page_id' => $page->id,
             'book_id' => $page->book_id ?? null,
         ]);
+
+        $this->enqueueAttachments($page, OpenWebUISyncService::TASK_DELETE_ATTACHMENT);
+    }
+
+    private function enqueueAttachments(mixed $page, string $taskType): void
+    {
+        if (!isset($page->id)) {
+            return;
+        }
+
+        $repo = app(BookStackRepository::class);
+        $attachments = $repo->listAttachmentsForPage((int) $page->id);
+        if (!$attachments) {
+            return;
+        }
+
+        $sync = app(OpenWebUISyncService::class);
+        foreach ($attachments as $attachment) {
+            if (!isset($attachment->id)) {
+                continue;
+            }
+            $sync->enqueueTask($taskType, [
+                'attachment_id' => $attachment->id,
+                'book_id' => $page->book_id ?? $attachment->book_id ?? null,
+            ]);
+        }
     }
 }
