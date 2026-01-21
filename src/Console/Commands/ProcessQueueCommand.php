@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pronomix\BookStackOpenWebUISync\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Pronomix\BookStackOpenWebUISync\Models\OpenWebUISyncTask;
@@ -61,9 +62,18 @@ class ProcessQueueCommand extends Command
                 $maxAttempts = (int) config('bookstack-openwebui.queue.max_attempts');
                 $backoff = (int) config('bookstack-openwebui.queue.backoff_seconds');
                 $retryAt = null;
+                $responseContext = [];
 
                 if ($task->attempts < $maxAttempts) {
                     $retryAt = now()->addSeconds($backoff);
+                }
+
+                if ($e instanceof RequestException) {
+                    $response = $e->response;
+                    $responseContext = [
+                        'http_status' => $response?->status(),
+                        'http_body' => $response?->body(),
+                    ];
                 }
 
                 $task->markFailed($e->getMessage(), $retryAt);
@@ -72,6 +82,7 @@ class ProcessQueueCommand extends Command
                     'task_id' => $task->id,
                     'task_type' => $task->task_type,
                     'error' => $e->getMessage(),
+                    'response' => $responseContext,
                 ]);
             }
         }
