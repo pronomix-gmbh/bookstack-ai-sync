@@ -16,6 +16,7 @@ class BookStackRepository
     ];
     private const IMAGE_MODEL_CLASSES = [
         'BookStack\\Uploads\\Image',
+        'BookStack\\Entities\\Models\\Image',
     ];
 
     public function getBookById(int $bookId): mixed
@@ -87,12 +88,14 @@ class BookStackRepository
 
         $attachmentModel = new $attachmentClass();
         $table = $attachmentModel->getTable();
+        $pageType = $this->pageMorphClass();
 
         $query = $attachmentClass::query();
 
         if (Schema::hasColumn($table, 'book_id')) {
             $query->where('book_id', $bookId);
-        } elseif (Schema::hasColumn($table, 'uploaded_to') && class_exists('BookStack\\Entities\\Models\\Page')) {
+        } elseif ((Schema::hasColumn($table, 'uploaded_to_id') || Schema::hasColumn($table, 'uploaded_to'))
+            && class_exists('BookStack\\Entities\\Models\\Page')) {
             $pageIds = \BookStack\Entities\Models\Page::query()
                 ->where('book_id', $bookId)
                 ->pluck('id');
@@ -101,7 +104,19 @@ class BookStackRepository
                 return [];
             }
 
-            $query->whereIn('uploaded_to', $pageIds->all());
+            if (Schema::hasColumn($table, 'uploaded_to_id')) {
+                $query->whereIn('uploaded_to_id', $pageIds->all());
+                if ($pageType && Schema::hasColumn($table, 'uploaded_to_type')) {
+                    $query->where('uploaded_to_type', $pageType);
+                }
+            } elseif (Schema::hasColumn($table, 'uploaded_to')) {
+                $query->whereIn('uploaded_to', $pageIds->all());
+                if ($pageType && Schema::hasColumn($table, 'uploaded_to_type')) {
+                    $query->where('uploaded_to_type', $pageType);
+                }
+            } else {
+                return [];
+            }
         } else {
             return [];
         }
@@ -118,10 +133,7 @@ class BookStackRepository
 
         $imageModel = new $imageClass();
         $table = $imageModel->getTable();
-
-        if (!Schema::hasColumn($table, 'uploaded_to')) {
-            return [];
-        }
+        $pageType = $this->pageMorphClass();
 
         $pageIds = \BookStack\Entities\Models\Page::query()
             ->where('book_id', $bookId)
@@ -131,11 +143,23 @@ class BookStackRepository
             return [];
         }
 
-        return $imageClass::query()
-            ->whereIn('uploaded_to', $pageIds->all())
-            ->orderBy('id')
-            ->get()
-            ->all();
+        $query = $imageClass::query();
+
+        if (Schema::hasColumn($table, 'uploaded_to_id')) {
+            $query->whereIn('uploaded_to_id', $pageIds->all());
+            if ($pageType && Schema::hasColumn($table, 'uploaded_to_type')) {
+                $query->where('uploaded_to_type', $pageType);
+            }
+        } elseif (Schema::hasColumn($table, 'uploaded_to')) {
+            $query->whereIn('uploaded_to', $pageIds->all());
+            if ($pageType && Schema::hasColumn($table, 'uploaded_to_type')) {
+                $query->where('uploaded_to_type', $pageType);
+            }
+        } else {
+            return [];
+        }
+
+        return $query->orderBy('id')->get()->all();
     }
 
     public function listAttachmentsForPage(int $pageId): array
@@ -147,11 +171,20 @@ class BookStackRepository
 
         $attachmentModel = new $attachmentClass();
         $table = $attachmentModel->getTable();
+        $pageType = $this->pageMorphClass();
 
         $query = $attachmentClass::query();
 
-        if (Schema::hasColumn($table, 'uploaded_to')) {
+        if (Schema::hasColumn($table, 'uploaded_to_id')) {
+            $query->where('uploaded_to_id', $pageId);
+            if ($pageType && Schema::hasColumn($table, 'uploaded_to_type')) {
+                $query->where('uploaded_to_type', $pageType);
+            }
+        } elseif (Schema::hasColumn($table, 'uploaded_to')) {
             $query->where('uploaded_to', $pageId);
+            if ($pageType && Schema::hasColumn($table, 'uploaded_to_type')) {
+                $query->where('uploaded_to_type', $pageType);
+            }
         } elseif (Schema::hasColumn($table, 'page_id')) {
             $query->where('page_id', $pageId);
         } else {
@@ -170,16 +203,25 @@ class BookStackRepository
 
         $imageModel = new $imageClass();
         $table = $imageModel->getTable();
+        $pageType = $this->pageMorphClass();
 
-        if (!Schema::hasColumn($table, 'uploaded_to')) {
+        $query = $imageClass::query();
+
+        if (Schema::hasColumn($table, 'uploaded_to_id')) {
+            $query->where('uploaded_to_id', $pageId);
+            if ($pageType && Schema::hasColumn($table, 'uploaded_to_type')) {
+                $query->where('uploaded_to_type', $pageType);
+            }
+        } elseif (Schema::hasColumn($table, 'uploaded_to')) {
+            $query->where('uploaded_to', $pageId);
+            if ($pageType && Schema::hasColumn($table, 'uploaded_to_type')) {
+                $query->where('uploaded_to_type', $pageType);
+            }
+        } else {
             return [];
         }
 
-        return $imageClass::query()
-            ->where('uploaded_to', $pageId)
-            ->orderBy('id')
-            ->get()
-            ->all();
+        return $query->orderBy('id')->get()->all();
     }
 
     public function getPageBody(mixed $page): string
@@ -250,6 +292,13 @@ class BookStackRepository
             }
         }
 
+        if (isset($attachment->uploaded_to_id) && class_exists('BookStack\\Entities\\Models\\Page')) {
+            $page = \BookStack\Entities\Models\Page::query()->find((int) $attachment->uploaded_to_id);
+            if ($page) {
+                return $page->book ?? $this->getBookById((int) $page->book_id);
+            }
+        }
+
         return null;
     }
 
@@ -272,6 +321,13 @@ class BookStackRepository
 
         if (isset($image->uploaded_to) && class_exists('BookStack\\Entities\\Models\\Page')) {
             $page = \BookStack\Entities\Models\Page::query()->find((int) $image->uploaded_to);
+            if ($page) {
+                return $page->book ?? $this->getBookById((int) $page->book_id);
+            }
+        }
+
+        if (isset($image->uploaded_to_id) && class_exists('BookStack\\Entities\\Models\\Page')) {
+            $page = \BookStack\Entities\Models\Page::query()->find((int) $image->uploaded_to_id);
             if ($page) {
                 return $page->book ?? $this->getBookById((int) $page->book_id);
             }
@@ -406,6 +462,20 @@ class BookStackRepository
         }
 
         return null;
+    }
+
+    private function pageMorphClass(): ?string
+    {
+        if (!class_exists('BookStack\\Entities\\Models\\Page')) {
+            return null;
+        }
+
+        $page = new \BookStack\Entities\Models\Page();
+        if (method_exists($page, 'getMorphClass')) {
+            return $page->getMorphClass();
+        }
+
+        return \BookStack\Entities\Models\Page::class;
     }
 
     private function loadRelationIfExists(mixed $model, string $relation): mixed
