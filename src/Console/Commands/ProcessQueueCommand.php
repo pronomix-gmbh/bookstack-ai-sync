@@ -24,23 +24,39 @@ class ProcessQueueCommand extends Command
 
         $limit = (int) ($this->option('limit') ?? config('bookstack-openwebui.queue.max_tasks_per_run'));
         $limit = $limit > 0 ? $limit : 25;
+        $channel = config('bookstack-openwebui.log_channel') ?? config('logging.default');
 
         if ($sync->shouldPoll(now())) {
             $sync->enqueueTask(OpenWebUISyncService::TASK_POLL_CHANGES);
         }
 
         $tasks = OpenWebUISyncTask::query()->ready()->orderBy('available_at')->limit($limit)->get();
+        $pendingCount = OpenWebUISyncTask::query()->where('status', OpenWebUISyncTask::STATUS_PENDING)->count();
+
+        Log::channel($channel)->info('OpenWebUI queue run started', [
+            'limit' => $limit,
+            'ready_count' => $tasks->count(),
+            'pending_total' => $pendingCount,
+        ]);
 
         foreach ($tasks as $task) {
             $task->markProcessing();
             $correlationId = (string) Str::uuid();
 
-            $channel = config('bookstack-openwebui.log_channel') ?? config('logging.default');
             Log::channel($channel)->withContext(['openwebui_task_id' => $task->id, 'correlation_id' => $correlationId]);
+            Log::channel($channel)->info('OpenWebUI task started', [
+                'task_id' => $task->id,
+                'task_type' => $task->task_type,
+                'attempt' => $task->attempts,
+            ]);
 
             try {
                 $sync->handleTask($task);
                 $task->markDone();
+                Log::channel($channel)->info('OpenWebUI task completed', [
+                    'task_id' => $task->id,
+                    'task_type' => $task->task_type,
+                ]);
             } catch (\Throwable $e) {
                 $maxAttempts = (int) config('bookstack-openwebui.queue.max_attempts');
                 $backoff = (int) config('bookstack-openwebui.queue.backoff_seconds');
@@ -52,14 +68,17 @@ class ProcessQueueCommand extends Command
 
                 $task->markFailed($e->getMessage(), $retryAt);
 
-                $channel = config('bookstack-openwebui.log_channel') ?? config('logging.default');
                 Log::channel($channel)->error('OpenWebUI task failed', [
-                        'task_id' => $task->id,
-                        'task_type' => $task->task_type,
-                        'error' => $e->getMessage(),
-                    ]);
+                    'task_id' => $task->id,
+                    'task_type' => $task->task_type,
+                    'error' => $e->getMessage(),
+                ]);
             }
         }
+
+        Log::channel($channel)->info('OpenWebUI queue run finished', [
+            'processed' => $tasks->count(),
+        ]);
 
         $this->info('Processed ' . $tasks->count() . ' task(s).');
 

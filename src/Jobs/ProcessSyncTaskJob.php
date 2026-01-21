@@ -38,10 +38,19 @@ class ProcessSyncTaskJob implements ShouldQueue
 
         $channel = config('bookstack-openwebui.log_channel') ?? config('logging.default');
         Log::channel($channel)->withContext(['openwebui_task_id' => $task->id, 'correlation_id' => $correlationId]);
+        Log::channel($channel)->info('OpenWebUI task started (job)', [
+            'task_id' => $task->id,
+            'task_type' => $task->task_type,
+            'attempt' => $task->attempts,
+        ]);
 
         try {
             $sync->handleTask($task);
             $task->markDone();
+            Log::channel($channel)->info('OpenWebUI task completed (job)', [
+                'task_id' => $task->id,
+                'task_type' => $task->task_type,
+            ]);
         } catch (\Throwable $e) {
             $maxAttempts = (int) config('bookstack-openwebui.queue.max_attempts');
             $backoff = (int) config('bookstack-openwebui.queue.backoff_seconds');
@@ -53,12 +62,11 @@ class ProcessSyncTaskJob implements ShouldQueue
 
             $task->markFailed($e->getMessage(), $retryAt);
 
-            $channel = config('bookstack-openwebui.log_channel') ?? config('logging.default');
             Log::channel($channel)->error('OpenWebUI task failed', [
-                    'task_id' => $task->id,
-                    'task_type' => $task->task_type,
-                    'error' => $e->getMessage(),
-                ]);
+                'task_id' => $task->id,
+                'task_type' => $task->task_type,
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 }
