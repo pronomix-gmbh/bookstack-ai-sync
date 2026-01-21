@@ -62,6 +62,9 @@ class OpenWebUIClient
     public function listKnowledgeFiles(string $knowledgeId, array $query = []): array
     {
         $response = $this->request()->get($this->path('knowledge_files', $knowledgeId), $query);
+        if ($response->status() === 404) {
+            return [];
+        }
         $response->throw();
 
         $data = $response->json();
@@ -79,6 +82,9 @@ class OpenWebUIClient
         }
 
         $response = $this->request()->get($this->path('file_search'), $query);
+        if ($response->status() === 404) {
+            return [];
+        }
         $response->throw();
 
         $data = $response->json();
