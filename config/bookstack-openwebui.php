@@ -12,9 +12,9 @@ return [
         'timeout' => (int) env('OPENWEBUI_TIMEOUT', 30),
         'verify_tls' => env('OPENWEBUI_VERIFY_TLS', true),
         'paths' => [
-            'knowledge_list' => '/api/v1/knowledge',
+            'knowledge_list' => '/api/v1/knowledge/',
             'knowledge_create' => '/api/v1/knowledge/create',
-            'file_upload' => '/api/v1/files',
+            'file_upload' => '/api/v1/files/',
             'knowledge_file_add' => '/api/v1/knowledge/{id}/file/add',
             'file_delete' => '/api/v1/files/{id}',
             'knowledge_delete' => '/api/v1/knowledge/{id}/delete',
