@@ -184,8 +184,7 @@ class OpenWebUISyncService
                 );
                 return;
             } catch (RequestException $e) {
-                $status = $e->response?->status();
-                if ($status !== 404) {
+                if (!$this->isNotFoundError($e)) {
                     throw $e;
                 }
             }
@@ -309,8 +308,7 @@ class OpenWebUISyncService
                 );
                 return;
             } catch (RequestException $e) {
-                $status = $e->response?->status();
-                if ($status !== 404) {
+                if (!$this->isNotFoundError($e)) {
                     throw $e;
                 }
             }
@@ -418,8 +416,7 @@ class OpenWebUISyncService
                 );
                 return;
             } catch (RequestException $e) {
-                $status = $e->response?->status();
-                if ($status !== 404) {
+                if (!$this->isNotFoundError($e)) {
                     throw $e;
                 }
             }
@@ -718,6 +715,26 @@ class OpenWebUISyncService
         return stripos($body, 'duplicate content') !== false;
     }
 
+    private function isNotFoundError(RequestException $e): bool
+    {
+        $response = $e->response;
+        if (!$response) {
+            return false;
+        }
+
+        $status = $response->status();
+        if ($status === 404) {
+            return true;
+        }
+
+        if ($status !== 400) {
+            return false;
+        }
+
+        $body = strtolower((string) $response->body());
+        return str_contains($body, 'could not find') || str_contains($body, 'not found');
+    }
+
     private function handleDuplicateUpload(
         ?OpenWebUIFileMap $existing,
         string $knowledgeId,
@@ -772,8 +789,7 @@ class OpenWebUISyncService
         try {
             $this->client->updateKnowledgeFile($knowledgeId, $fileId);
         } catch (RequestException $e) {
-            $status = $e->response?->status();
-            if ($status !== 404) {
+            if (!$this->isNotFoundError($e)) {
                 throw $e;
             }
 
@@ -787,8 +803,7 @@ class OpenWebUISyncService
         try {
             $this->client->updateKnowledgeFile($knowledgeId, $fileId);
         } catch (RequestException $e) {
-            $status = $e->response?->status();
-            if ($status !== 404) {
+            if (!$this->isNotFoundError($e)) {
                 throw $e;
             }
 
