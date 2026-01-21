@@ -281,19 +281,45 @@ class OpenWebUISyncService
         $externalKey = $this->externalKeyForAttachment((string) $bookSlug, (int) $attachment->id);
         $originalName = $this->bookStack->attachmentFilename($attachment);
         $extension = pathinfo($originalName, PATHINFO_EXTENSION);
-        $filename = $this->sanitizeFilename($externalKey) . ($extension ? '.' . $extension : '');
+        $baseFilename = $this->sanitizeFilename($externalKey);
+        $filename = $baseFilename . ($extension ? '.' . $extension : '');
+        $candidates = $extension !== '' ? [$filename] : [$baseFilename, $baseFilename . '.md'];
 
         $existing = OpenWebUIFileMap::query()
             ->where('entity_type', 'attachment')
             ->where('entity_id', $attachment->id)
             ->first();
 
-        [$stream] = $this->bookStack->resolveAttachmentStream($attachment);
-        if (is_string($stream) && $extension === '') {
-            $filename .= '.md';
+        [$searchFileId, $searchFilename] = $this->findFileIdByCandidates($knowledgeMap->knowledge_id, $candidates);
+        $existingFileId = $searchFileId ?: ($existing?->openwebui_file_id);
+        $resolvedFilename = $searchFilename ?: ($existing?->openwebui_filename ?: $candidates[0]);
+
+        if ($existingFileId) {
+            try {
+                $this->ensureKnowledgeFileUpdated($knowledgeMap->knowledge_id, $existingFileId);
+                $this->saveFileMapping(
+                    $existing,
+                    'attachment',
+                    $attachment->id,
+                    $book->id,
+                    $knowledgeMap->knowledge_id,
+                    $existingFileId,
+                    $resolvedFilename,
+                    $externalKey
+                );
+                return;
+            } catch (RequestException $e) {
+                $status = $e->response?->status();
+                if ($status !== 404) {
+                    throw $e;
+                }
+            }
         }
 
-        $searchFileId = $this->findFileIdByFilename($knowledgeMap->knowledge_id, $filename);
+        [$stream] = $this->bookStack->resolveAttachmentStream($attachment);
+        if (is_string($stream) && $extension === '') {
+            $filename = $baseFilename . '.md';
+        }
 
         try {
             try {
@@ -364,14 +390,40 @@ class OpenWebUISyncService
         $externalKey = $this->externalKeyForImage((string) $bookSlug, (int) $image->id);
         $originalName = $this->bookStack->imageFilename($image);
         $extension = pathinfo($originalName, PATHINFO_EXTENSION);
-        $filename = $this->sanitizeFilename($externalKey) . ($extension ? '.' . $extension : '');
+        $baseFilename = $this->sanitizeFilename($externalKey);
+        $filename = $baseFilename . ($extension ? '.' . $extension : '');
+        $candidates = $extension !== '' ? [$filename] : [$baseFilename];
 
         $existing = OpenWebUIFileMap::query()
             ->where('entity_type', 'image')
             ->where('entity_id', $image->id)
             ->first();
 
-        $searchFileId = $this->findFileIdByFilename($knowledgeMap->knowledge_id, $filename);
+        [$searchFileId, $searchFilename] = $this->findFileIdByCandidates($knowledgeMap->knowledge_id, $candidates);
+        $existingFileId = $searchFileId ?: ($existing?->openwebui_file_id);
+        $resolvedFilename = $searchFilename ?: ($existing?->openwebui_filename ?: $candidates[0]);
+
+        if ($existingFileId) {
+            try {
+                $this->ensureKnowledgeFileUpdated($knowledgeMap->knowledge_id, $existingFileId);
+                $this->saveFileMapping(
+                    $existing,
+                    'image',
+                    $image->id,
+                    $book->id,
+                    $knowledgeMap->knowledge_id,
+                    $existingFileId,
+                    $resolvedFilename,
+                    $externalKey
+                );
+                return;
+            } catch (RequestException $e) {
+                $status = $e->response?->status();
+                if ($status !== 404) {
+                    throw $e;
+                }
+            }
+        }
 
         [$stream] = $this->bookStack->resolveImageStream($image);
 
@@ -730,6 +782,21 @@ class OpenWebUISyncService
         }
     }
 
+    private function ensureKnowledgeFileUpdated(string $knowledgeId, string $fileId): void
+    {
+        try {
+            $this->client->updateKnowledgeFile($knowledgeId, $fileId);
+        } catch (RequestException $e) {
+            $status = $e->response?->status();
+            if ($status !== 404) {
+                throw $e;
+            }
+
+            $this->client->addFileToKnowledge($knowledgeId, $fileId);
+            $this->client->updateKnowledgeFile($knowledgeId, $fileId);
+        }
+    }
+
     private function saveFileMapping(
         ?OpenWebUIFileMap $existing,
         string $entityType,
@@ -796,6 +863,22 @@ class OpenWebUISyncService
         }
 
         return null;
+    }
+
+    private function findFileIdByCandidates(string $knowledgeId, array $candidates): array
+    {
+        foreach ($candidates as $candidate) {
+            $candidate = trim((string) $candidate);
+            if ($candidate === '') {
+                continue;
+            }
+            $fileId = $this->findFileIdByFilename($knowledgeId, $candidate);
+            if ($fileId) {
+                return [$fileId, $candidate];
+            }
+        }
+
+        return [null, null];
     }
 
     private function listKnowledgeFiles(string $knowledgeId, array $query = []): array
