@@ -166,11 +166,48 @@ class OpenWebUISyncService
             ->where('entity_id', $page->id)
             ->first();
 
-        if ($existing && $existing->openwebui_file_id) {
-            $this->deleteRemoteFileQuietly($existing->openwebui_file_id);
+        $searchFileId = $this->findFileIdByFilename($knowledgeMap->knowledge_id, $filename);
+        $existingFileId = $searchFileId ?: ($existing?->openwebui_file_id);
+
+        if ($existingFileId) {
+            try {
+                $this->updateKnowledgeFileContent($knowledgeMap->knowledge_id, $existingFileId, $content);
+                $this->saveFileMapping(
+                    $existing,
+                    'page',
+                    $page->id,
+                    $book->id,
+                    $knowledgeMap->knowledge_id,
+                    $existingFileId,
+                    $filename,
+                    $externalKey
+                );
+                return;
+            } catch (RequestException $e) {
+                $status = $e->response?->status();
+                if ($status !== 404) {
+                    throw $e;
+                }
+            }
         }
 
-        $upload = $this->client->uploadFile($filename, $content);
+        try {
+            $upload = $this->client->uploadFile($filename, $content);
+        } catch (RequestException $e) {
+            if ($this->isDuplicateContentError($e) && $this->handleDuplicateUpload(
+                $existing,
+                $knowledgeMap->knowledge_id,
+                $filename,
+                $externalKey,
+                'page',
+                $page->id,
+                (int) $book->id
+            )) {
+                return;
+            }
+            throw $e;
+        }
+
         $fileId = $this->client->extractId($upload);
         if (!$fileId) {
             throw new \RuntimeException('OpenWebUI did not return a file ID');
@@ -178,15 +215,20 @@ class OpenWebUISyncService
 
         $this->client->addFileToKnowledge($knowledgeMap->knowledge_id, $fileId);
 
-        $mapping = $existing ?? new OpenWebUIFileMap();
-        $mapping->entity_type = 'page';
-        $mapping->entity_id = $page->id;
-        $mapping->book_id = $book->id;
-        $mapping->knowledge_id = $knowledgeMap->knowledge_id;
-        $mapping->openwebui_file_id = $fileId;
-        $mapping->openwebui_filename = $filename;
-        $mapping->external_key = $externalKey;
-        $mapping->save();
+        if ($searchFileId && $searchFileId !== $fileId) {
+            $this->removeKnowledgeFileQuietly($knowledgeMap->knowledge_id, $searchFileId, true);
+        }
+
+        $this->saveFileMapping(
+            $existing,
+            'page',
+            $page->id,
+            $book->id,
+            $knowledgeMap->knowledge_id,
+            $fileId,
+            $filename,
+            $externalKey
+        );
     }
 
     public function deletePage(int $pageId): void
@@ -200,8 +242,17 @@ class OpenWebUISyncService
             return;
         }
 
-        if ($mapping->openwebui_file_id) {
-            $this->deleteRemoteFileQuietly($mapping->openwebui_file_id);
+        $knowledgeId = $mapping->knowledge_id;
+        $filename = $mapping->openwebui_filename ?? '';
+        $fileId = $filename !== '' && $knowledgeId
+            ? $this->findFileIdByFilename($knowledgeId, $filename)
+            : null;
+        $fileId = $fileId ?: $mapping->openwebui_file_id;
+
+        if ($knowledgeId && $fileId) {
+            $this->removeKnowledgeFileQuietly($knowledgeId, $fileId, true);
+        } elseif ($fileId) {
+            $this->deleteRemoteFileQuietly($fileId);
         }
 
         $mapping->delete();
@@ -237,17 +288,30 @@ class OpenWebUISyncService
             ->where('entity_id', $attachment->id)
             ->first();
 
-        if ($existing && $existing->openwebui_file_id) {
-            $this->deleteRemoteFileQuietly($existing->openwebui_file_id);
-        }
-
         [$stream] = $this->bookStack->resolveAttachmentStream($attachment);
         if (is_string($stream) && $extension === '') {
             $filename .= '.md';
         }
 
+        $searchFileId = $this->findFileIdByFilename($knowledgeMap->knowledge_id, $filename);
+
         try {
-            $upload = $this->client->uploadFile($filename, $stream);
+            try {
+                $upload = $this->client->uploadFile($filename, $stream);
+            } catch (RequestException $e) {
+                if ($this->isDuplicateContentError($e) && $this->handleDuplicateUpload(
+                    $existing,
+                    $knowledgeMap->knowledge_id,
+                    $filename,
+                    $externalKey,
+                    'attachment',
+                    $attachment->id,
+                    (int) $book->id
+                )) {
+                    return;
+                }
+                throw $e;
+            }
         } finally {
             if (is_resource($stream)) {
                 fclose($stream);
@@ -261,15 +325,20 @@ class OpenWebUISyncService
 
         $this->client->addFileToKnowledge($knowledgeMap->knowledge_id, $fileId);
 
-        $mapping = $existing ?? new OpenWebUIFileMap();
-        $mapping->entity_type = 'attachment';
-        $mapping->entity_id = $attachment->id;
-        $mapping->book_id = $book->id;
-        $mapping->knowledge_id = $knowledgeMap->knowledge_id;
-        $mapping->openwebui_file_id = $fileId;
-        $mapping->openwebui_filename = $filename;
-        $mapping->external_key = $externalKey;
-        $mapping->save();
+        if ($searchFileId && $searchFileId !== $fileId) {
+            $this->removeKnowledgeFileQuietly($knowledgeMap->knowledge_id, $searchFileId, true);
+        }
+
+        $this->saveFileMapping(
+            $existing,
+            'attachment',
+            $attachment->id,
+            $book->id,
+            $knowledgeMap->knowledge_id,
+            $fileId,
+            $filename,
+            $externalKey
+        );
     }
 
     public function upsertImage(int $imageId): void
@@ -302,14 +371,27 @@ class OpenWebUISyncService
             ->where('entity_id', $image->id)
             ->first();
 
-        if ($existing && $existing->openwebui_file_id) {
-            $this->deleteRemoteFileQuietly($existing->openwebui_file_id);
-        }
+        $searchFileId = $this->findFileIdByFilename($knowledgeMap->knowledge_id, $filename);
 
         [$stream] = $this->bookStack->resolveImageStream($image);
 
         try {
-            $upload = $this->client->uploadFile($filename, $stream);
+            try {
+                $upload = $this->client->uploadFile($filename, $stream);
+            } catch (RequestException $e) {
+                if ($this->isDuplicateContentError($e) && $this->handleDuplicateUpload(
+                    $existing,
+                    $knowledgeMap->knowledge_id,
+                    $filename,
+                    $externalKey,
+                    'image',
+                    $image->id,
+                    (int) $book->id
+                )) {
+                    return;
+                }
+                throw $e;
+            }
         } finally {
             if (is_resource($stream)) {
                 fclose($stream);
@@ -323,15 +405,20 @@ class OpenWebUISyncService
 
         $this->client->addFileToKnowledge($knowledgeMap->knowledge_id, $fileId);
 
-        $mapping = $existing ?? new OpenWebUIFileMap();
-        $mapping->entity_type = 'image';
-        $mapping->entity_id = $image->id;
-        $mapping->book_id = $book->id;
-        $mapping->knowledge_id = $knowledgeMap->knowledge_id;
-        $mapping->openwebui_file_id = $fileId;
-        $mapping->openwebui_filename = $filename;
-        $mapping->external_key = $externalKey;
-        $mapping->save();
+        if ($searchFileId && $searchFileId !== $fileId) {
+            $this->removeKnowledgeFileQuietly($knowledgeMap->knowledge_id, $searchFileId, true);
+        }
+
+        $this->saveFileMapping(
+            $existing,
+            'image',
+            $image->id,
+            $book->id,
+            $knowledgeMap->knowledge_id,
+            $fileId,
+            $filename,
+            $externalKey
+        );
     }
 
     public function deleteAttachment(int $attachmentId): void
@@ -345,8 +432,17 @@ class OpenWebUISyncService
             return;
         }
 
-        if ($mapping->openwebui_file_id) {
-            $this->deleteRemoteFileQuietly($mapping->openwebui_file_id);
+        $knowledgeId = $mapping->knowledge_id;
+        $filename = $mapping->openwebui_filename ?? '';
+        $fileId = $filename !== '' && $knowledgeId
+            ? $this->findFileIdByFilename($knowledgeId, $filename)
+            : null;
+        $fileId = $fileId ?: $mapping->openwebui_file_id;
+
+        if ($knowledgeId && $fileId) {
+            $this->removeKnowledgeFileQuietly($knowledgeId, $fileId, true);
+        } elseif ($fileId) {
+            $this->deleteRemoteFileQuietly($fileId);
         }
 
         $mapping->delete();
@@ -363,8 +459,17 @@ class OpenWebUISyncService
             return;
         }
 
-        if ($mapping->openwebui_file_id) {
-            $this->deleteRemoteFileQuietly($mapping->openwebui_file_id);
+        $knowledgeId = $mapping->knowledge_id;
+        $filename = $mapping->openwebui_filename ?? '';
+        $fileId = $filename !== '' && $knowledgeId
+            ? $this->findFileIdByFilename($knowledgeId, $filename)
+            : null;
+        $fileId = $fileId ?: $mapping->openwebui_file_id;
+
+        if ($knowledgeId && $fileId) {
+            $this->removeKnowledgeFileQuietly($knowledgeId, $fileId, true);
+        } elseif ($fileId) {
+            $this->deleteRemoteFileQuietly($fileId);
         }
 
         $mapping->delete();
@@ -408,14 +513,12 @@ class OpenWebUISyncService
             return;
         }
 
-        $existing = OpenWebUIFileMap::query()->where('book_id', $bookId)->get();
-        foreach ($existing as $map) {
-            if ($map->openwebui_file_id) {
-                $this->deleteRemoteFileQuietly($map->openwebui_file_id);
-            }
+        $book = $this->bookStack->getBookById($bookId);
+        if (!$book) {
+            return;
         }
 
-        OpenWebUIFileMap::query()->where('book_id', $bookId)->delete();
+        $this->pruneKnowledgeFilesForBook($book, $knowledgeMap);
 
         foreach ($this->bookStack->listPagesForBook($bookId) as $page) {
             $this->enqueueTask(self::TASK_UPSERT_PAGE, ['page_id' => $page->id, 'book_id' => $bookId]);
@@ -455,19 +558,7 @@ class OpenWebUISyncService
 
     public function enqueueSyncBook(int $bookId): void
     {
-        $this->enqueueTask(self::TASK_ENSURE_BOOK, ['book_id' => $bookId]);
-
-        foreach ($this->bookStack->listPagesForBook($bookId) as $page) {
-            $this->enqueueTask(self::TASK_UPSERT_PAGE, ['page_id' => $page->id, 'book_id' => $bookId]);
-        }
-
-        foreach ($this->bookStack->listAttachmentsForBook($bookId) as $attachment) {
-            $this->enqueueTask(self::TASK_UPSERT_ATTACHMENT, ['attachment_id' => $attachment->id, 'book_id' => $bookId]);
-        }
-
-        foreach ($this->bookStack->listImagesForBook($bookId) as $image) {
-            $this->enqueueTask(self::TASK_UPSERT_IMAGE, ['image_id' => $image->id, 'book_id' => $bookId]);
-        }
+        $this->enqueueTask(self::TASK_REBUILD_BOOK, ['book_id' => $bookId]);
     }
 
     public function handleTask(OpenWebUISyncTask $task): void
@@ -548,13 +639,324 @@ class OpenWebUISyncService
         ]);
     }
 
+    private function resolveLogChannel(): string
+    {
+        $channel = config('bookstack-openwebui.log_channel');
+        if (is_string($channel) && $channel !== '' && config('logging.channels.' . $channel)) {
+            return $channel;
+        }
+
+        $default = (string) config('logging.default');
+        if ($default !== '' && config('logging.channels.' . $default)) {
+            return $default;
+        }
+
+        return 'stack';
+    }
+
+    private function isDuplicateContentError(RequestException $e): bool
+    {
+        $response = $e->response;
+        if (!$response || $response->status() !== 400) {
+            return false;
+        }
+
+        $body = (string) $response->body();
+
+        return stripos($body, 'duplicate content') !== false;
+    }
+
+    private function handleDuplicateUpload(
+        ?OpenWebUIFileMap $existing,
+        string $knowledgeId,
+        string $filename,
+        string $externalKey,
+        string $entityType,
+        int $entityId,
+        int $bookId
+    ): bool {
+        $fileId = $this->findFileIdByFilename($knowledgeId, $filename);
+        if (!$fileId && $existing?->openwebui_file_id) {
+            $fileId = $existing->openwebui_file_id;
+        }
+
+        if (!$fileId) {
+            Log::channel($this->resolveLogChannel())->warning('OpenWebUI duplicate content without existing file', [
+                'entity_type' => $entityType,
+                'entity_id' => $entityId,
+            ]);
+            return false;
+        }
+
+        try {
+            $this->client->addFileToKnowledge($knowledgeId, $fileId);
+        } catch (\Throwable $e) {
+            Log::channel($this->resolveLogChannel())->warning('OpenWebUI duplicate content could not reattach file', [
+                'entity_type' => $entityType,
+                'entity_id' => $entityId,
+                'file_id' => $fileId,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        $this->saveFileMapping(
+            $existing,
+            $entityType,
+            $entityId,
+            $bookId,
+            $knowledgeId,
+            $fileId,
+            $filename,
+            $externalKey
+        );
+
+        return true;
+    }
+
+    private function updateKnowledgeFileContent(string $knowledgeId, string $fileId, string $content): void
+    {
+        $this->client->updateFileContent($fileId, $content);
+
+        try {
+            $this->client->updateKnowledgeFile($knowledgeId, $fileId);
+        } catch (RequestException $e) {
+            $status = $e->response?->status();
+            if ($status !== 404) {
+                throw $e;
+            }
+
+            $this->client->addFileToKnowledge($knowledgeId, $fileId);
+            $this->client->updateKnowledgeFile($knowledgeId, $fileId);
+        }
+    }
+
+    private function saveFileMapping(
+        ?OpenWebUIFileMap $existing,
+        string $entityType,
+        int $entityId,
+        int $bookId,
+        string $knowledgeId,
+        string $fileId,
+        string $filename,
+        string $externalKey
+    ): OpenWebUIFileMap {
+        $mapping = $existing ?? new OpenWebUIFileMap();
+        $mapping->entity_type = $entityType;
+        $mapping->entity_id = $entityId;
+        $mapping->book_id = $bookId;
+        $mapping->knowledge_id = $knowledgeId;
+        $mapping->openwebui_file_id = $fileId;
+        $mapping->openwebui_filename = $filename;
+        $mapping->external_key = $externalKey;
+        $mapping->save();
+
+        return $mapping;
+    }
+
+    private function findFileIdByFilename(string $knowledgeId, string $filename): ?string
+    {
+        $filename = trim($filename);
+        if ($filename === '') {
+            return null;
+        }
+
+        $searchResults = $this->client->searchFilesByFilename($filename);
+        $knowledgeResults = $this->listKnowledgeFiles($knowledgeId, ['query' => $filename]);
+
+        $knowledgeIds = [];
+        foreach ($knowledgeResults as $file) {
+            $id = (string) Arr::get($file, 'id');
+            $fileName = (string) Arr::get($file, 'filename');
+            if ($id === '' || $fileName === '') {
+                continue;
+            }
+            if ($fileName === $filename) {
+                return $id;
+            }
+            $knowledgeIds[$id] = true;
+        }
+
+        foreach ($searchResults as $file) {
+            $id = (string) Arr::get($file, 'id');
+            $fileName = (string) Arr::get($file, 'filename');
+            if ($id === '') {
+                continue;
+            }
+            if ($fileName !== '' && $fileName !== $filename) {
+                continue;
+            }
+            if (empty($knowledgeIds) || isset($knowledgeIds[$id])) {
+                return $id;
+            }
+        }
+
+        if (!empty($knowledgeIds)) {
+            $first = array_key_first($knowledgeIds);
+            return $first !== null ? (string) $first : null;
+        }
+
+        return null;
+    }
+
+    private function listKnowledgeFiles(string $knowledgeId, array $query = []): array
+    {
+        $response = $this->client->listKnowledgeFiles($knowledgeId, $query);
+        return $this->extractKnowledgeFileItems($response);
+    }
+
+    private function listAllKnowledgeFiles(string $knowledgeId): array
+    {
+        $page = 1;
+        $all = [];
+
+        while (true) {
+            $response = $this->client->listKnowledgeFiles($knowledgeId, ['page' => $page]);
+            $items = $this->extractKnowledgeFileItems($response);
+            if (empty($items)) {
+                break;
+            }
+
+            $all = array_merge($all, $items);
+
+            $total = $this->extractKnowledgeFileTotal($response);
+            if ($total !== null && count($all) >= $total) {
+                break;
+            }
+
+            $page++;
+        }
+
+        return $all;
+    }
+
+    private function extractKnowledgeFileItems(array $response): array
+    {
+        if (Arr::has($response, 'items') && is_array($response['items'])) {
+            return $response['items'];
+        }
+
+        if (Arr::has($response, 'data') && is_array($response['data'])) {
+            return $response['data'];
+        }
+
+        return [];
+    }
+
+    private function extractKnowledgeFileTotal(array $response): ?int
+    {
+        $total = Arr::get($response, 'total');
+        if (is_int($total)) {
+            return $total;
+        }
+        if (is_numeric($total)) {
+            return (int) $total;
+        }
+
+        return null;
+    }
+
+    private function pruneKnowledgeFilesForBook(mixed $book, OpenWebUIKnowledgeMap $knowledgeMap): void
+    {
+        $knowledgeId = $knowledgeMap->knowledge_id;
+        if ($knowledgeId === '') {
+            return;
+        }
+
+        $bookSlug = $book->slug ?? ('book-' . $book->id);
+        $expected = $this->buildExpectedFilenamesForBook($book, (string) $bookSlug);
+        $prefix = $this->sanitizeFilename($this->instanceName() . ':' . $bookSlug . ':');
+
+        $files = $this->listAllKnowledgeFiles($knowledgeId);
+        foreach ($files as $file) {
+            $fileId = (string) Arr::get($file, 'id');
+            $filename = (string) Arr::get($file, 'filename');
+
+            if ($fileId === '' || $filename === '') {
+                continue;
+            }
+
+            if (isset($expected[$filename])) {
+                continue;
+            }
+
+            if ($prefix !== '' && !str_starts_with($filename, $prefix)) {
+                continue;
+            }
+
+            $this->removeKnowledgeFileQuietly($knowledgeId, $fileId, true);
+            OpenWebUIFileMap::query()
+                ->where('knowledge_id', $knowledgeId)
+                ->where('openwebui_file_id', $fileId)
+                ->delete();
+        }
+
+        $expectedNames = array_keys($expected);
+        if (empty($expectedNames)) {
+            OpenWebUIFileMap::query()
+                ->where('knowledge_id', $knowledgeId)
+                ->delete();
+            return;
+        }
+
+        OpenWebUIFileMap::query()
+            ->where('knowledge_id', $knowledgeId)
+            ->whereNotIn('openwebui_filename', $expectedNames)
+            ->delete();
+    }
+
+    private function buildExpectedFilenamesForBook(mixed $book, string $bookSlug): array
+    {
+        $expected = [];
+
+        foreach ($this->bookStack->listPagesForBook((int) $book->id) as $page) {
+            $externalKey = $this->externalKeyForPage($bookSlug, (int) $page->id);
+            $filename = $this->sanitizeFilename($externalKey) . '.md';
+            $expected[$filename] = true;
+        }
+
+        foreach ($this->bookStack->listAttachmentsForBook((int) $book->id) as $attachment) {
+            $externalKey = $this->externalKeyForAttachment($bookSlug, (int) $attachment->id);
+            $base = $this->sanitizeFilename($externalKey);
+            $extension = pathinfo($this->bookStack->attachmentFilename($attachment), PATHINFO_EXTENSION);
+
+            if ($extension !== '') {
+                $expected[$base . '.' . $extension] = true;
+            } else {
+                $expected[$base] = true;
+                $expected[$base . '.md'] = true;
+            }
+        }
+
+        foreach ($this->bookStack->listImagesForBook((int) $book->id) as $image) {
+            $externalKey = $this->externalKeyForImage($bookSlug, (int) $image->id);
+            $base = $this->sanitizeFilename($externalKey);
+            $extension = pathinfo($this->bookStack->imageFilename($image), PATHINFO_EXTENSION);
+
+            $expected[$extension !== '' ? $base . '.' . $extension : $base] = true;
+        }
+
+        return $expected;
+    }
+
+    private function removeKnowledgeFileQuietly(string $knowledgeId, string $fileId, bool $deleteFile): void
+    {
+        try {
+            $this->client->removeKnowledgeFile($knowledgeId, $fileId, $deleteFile);
+        } catch (\Throwable $e) {
+            Log::channel($this->resolveLogChannel())->warning('OpenWebUI knowledge file remove failed', [
+                'file_id' => $fileId,
+                'knowledge_id' => $knowledgeId,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
     private function deleteRemoteFileQuietly(string $fileId): void
     {
         try {
             $this->client->deleteFile($fileId);
         } catch (\Throwable $e) {
-            $channel = config('bookstack-openwebui.log_channel') ?? config('logging.default');
-            Log::channel($channel)->warning('OpenWebUI file delete failed', [
+            Log::channel($this->resolveLogChannel())->warning('OpenWebUI file delete failed', [
                 'file_id' => $fileId,
                 'error' => $e->getMessage(),
             ]);

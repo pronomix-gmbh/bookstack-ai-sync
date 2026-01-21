@@ -37,7 +37,7 @@ class ProcessSyncTaskJob implements ShouldQueue
         $task->markProcessing();
         $correlationId = (string) Str::uuid();
 
-        $channel = config('bookstack-openwebui.log_channel') ?? config('logging.default');
+        $channel = $this->resolveLogChannel();
         Log::channel($channel)->withContext(['openwebui_task_id' => $task->id, 'correlation_id' => $correlationId]);
         Log::channel($channel)->info('OpenWebUI task started (job)', [
             'task_id' => $task->id,
@@ -79,5 +79,20 @@ class ProcessSyncTaskJob implements ShouldQueue
                 'response' => $responseContext,
             ]);
         }
+    }
+
+    private function resolveLogChannel(): string
+    {
+        $channel = config('bookstack-openwebui.log_channel');
+        if (is_string($channel) && $channel !== '' && config('logging.channels.' . $channel)) {
+            return $channel;
+        }
+
+        $default = (string) config('logging.default');
+        if ($default !== '' && config('logging.channels.' . $default)) {
+            return $default;
+        }
+
+        return 'stack';
     }
 }

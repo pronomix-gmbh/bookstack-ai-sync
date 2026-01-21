@@ -151,8 +151,23 @@ class PageObserver
 
     private function logger(): \Psr\Log\LoggerInterface
     {
-        $channel = config('bookstack-openwebui.log_channel') ?? config('logging.default');
+        $channel = $this->resolveLogChannel();
 
         return Log::channel($channel);
+    }
+
+    private function resolveLogChannel(): string
+    {
+        $channel = config('bookstack-openwebui.log_channel');
+        if (is_string($channel) && $channel !== '' && config('logging.channels.' . $channel)) {
+            return $channel;
+        }
+
+        $default = (string) config('logging.default');
+        if ($default !== '' && config('logging.channels.' . $default)) {
+            return $default;
+        }
+
+        return 'stack';
     }
 }

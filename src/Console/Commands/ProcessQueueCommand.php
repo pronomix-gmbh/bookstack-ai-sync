@@ -25,7 +25,7 @@ class ProcessQueueCommand extends Command
 
         $limit = (int) ($this->option('limit') ?? config('bookstack-openwebui.queue.max_tasks_per_run'));
         $limit = $limit > 0 ? $limit : 25;
-        $channel = config('bookstack-openwebui.log_channel') ?? config('logging.default');
+        $channel = $this->resolveLogChannel();
 
         $tasks = OpenWebUISyncTask::query()->ready()->orderBy('available_at')->limit($limit)->get();
         $pendingCount = OpenWebUISyncTask::query()->where('status', OpenWebUISyncTask::STATUS_PENDING)->count();
@@ -90,5 +90,20 @@ class ProcessQueueCommand extends Command
         $this->info('Processed ' . $tasks->count() . ' task(s).');
 
         return Command::SUCCESS;
+    }
+
+    private function resolveLogChannel(): string
+    {
+        $channel = config('bookstack-openwebui.log_channel');
+        if (is_string($channel) && $channel !== '' && config('logging.channels.' . $channel)) {
+            return $channel;
+        }
+
+        $default = (string) config('logging.default');
+        if ($default !== '' && config('logging.channels.' . $default)) {
+            return $default;
+        }
+
+        return 'stack';
     }
 }

@@ -59,6 +59,32 @@ class OpenWebUIClient
         return is_array($data) ? $data : null;
     }
 
+    public function listKnowledgeFiles(string $knowledgeId, array $query = []): array
+    {
+        $response = $this->request()->get($this->path('knowledge_files', $knowledgeId), $query);
+        $response->throw();
+
+        $data = $response->json();
+        return is_array($data) ? $data : [];
+    }
+
+    public function searchFilesByFilename(string $filename, int $skip = 0, int $limit = 50): array
+    {
+        $query = ['filename' => $filename];
+        if ($skip > 0) {
+            $query['skip'] = $skip;
+        }
+        if ($limit > 0) {
+            $query['limit'] = $limit;
+        }
+
+        $response = $this->request()->get($this->path('file_search'), $query);
+        $response->throw();
+
+        $data = $response->json();
+        return is_array($data) ? $data : [];
+    }
+
     public function listModels(): array
     {
         $response = $this->request()->get($this->path('model_list'));
@@ -135,10 +161,50 @@ class OpenWebUIClient
         return $response->json() ?? [];
     }
 
+    public function updateKnowledgeFile(string $knowledgeId, string $fileId): array
+    {
+        $response = $this->request()->post($this->path('knowledge_file_update', $knowledgeId), [
+            'file_id' => $fileId,
+        ]);
+
+        $response->throw();
+
+        return $response->json() ?? [];
+    }
+
+    public function removeKnowledgeFile(string $knowledgeId, string $fileId, bool $deleteFile = true): array
+    {
+        $query = ['delete_file' => $deleteFile ? 'true' : 'false'];
+
+        $response = $this->request()
+            ->withOptions(['query' => $query])
+            ->post($this->path('knowledge_file_remove', $knowledgeId), [
+                'file_id' => $fileId,
+            ]);
+
+        $response->throw();
+
+        return $response->json() ?? [];
+    }
+
     public function deleteFile(string $fileId): void
     {
         $response = $this->request()->delete($this->path('file_delete', $fileId));
+        if ($response->status() === 404) {
+            return;
+        }
         $response->throw();
+    }
+
+    public function updateFileContent(string $fileId, string $content): array
+    {
+        $response = $this->request()->post($this->path('file_content_update', $fileId), [
+            'content' => $content,
+        ]);
+
+        $response->throw();
+
+        return $response->json() ?? [];
     }
 
     public function deleteKnowledge(string $knowledgeId): void
