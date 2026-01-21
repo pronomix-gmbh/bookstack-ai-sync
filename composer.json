@@ -1,5 +1,5 @@
 {
-  "name": "pronomix/bookstack-openwebui-sync",
+  "name": "pronomix-gmbh/bookstack-ai-sync",
   "description": "BookStack to OpenWebUI knowledge sync package",
   "type": "library",
   "license": "MIT",

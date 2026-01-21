@@ -45,7 +45,7 @@ class InstallCommand extends Command
         $absolute = realpath(__DIR__ . '/../../../database/migrations');
 
         if (!$absolute) {
-            return 'vendor/pronomix/bookstack-openwebui-sync/database/migrations';
+            return 'vendor/pronomix-gmbh/bookstack-ai-sync/database/migrations';
         }
 
         $base = base_path();

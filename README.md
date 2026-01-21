@@ -5,7 +5,7 @@ A composer-installable BookStack package to sync BookStack books, pages, and att
 ## Install
 
 ```bash
-composer require pronomix/bookstack-openwebui-sync
+composer require pronomix-gmbh/bookstack-ai-sync
 ```
 
 Publish config (optional):
