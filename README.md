@@ -45,6 +45,9 @@ OPENWEBUI_TIMEOUT=30
 OPENWEBUI_VERIFY_TLS=true
 OPENWEBUI_POLL_ENABLED=true
 OPENWEBUI_POLL_INTERVAL=5
+OPENWEBUI_WORKSPACE_ENABLED=true
+OPENWEBUI_WORKSPACE_MODEL_ID=
+OPENWEBUI_WORKSPACE_MODEL_NAME=
 ```
 
 You can also configure these in the admin UI:
@@ -73,6 +76,16 @@ To prevent overlapping runs (e.g., if a queue run takes longer than a minute), u
 * * * * * flock -n /tmp/openwebui-queue.lock php /path/to/bookstack/artisan openwebui:process-queue >> /dev/null 2>&1
 ```
 
+## Workspace (model) sync
+
+OpenWebUI does not currently expose a dedicated workspace API, so this package optionally syncs all knowledge bases into a single OpenWebUI model entry. By default the model ID and name are taken from `OPENWEBUI_INSTANCE_NAME`. You can override with:
+
+```env
+OPENWEBUI_WORKSPACE_ENABLED=true
+OPENWEBUI_WORKSPACE_MODEL_ID=bookstack
+OPENWEBUI_WORKSPACE_MODEL_NAME=BookStack
+```
+
 ## Commands
 
 - `openwebui:process-queue` - Process pending sync tasks
@@ -80,6 +93,7 @@ To prevent overlapping runs (e.g., if a queue run takes longer than a minute), u
 - `openwebui:sync-book {bookId}` - Enqueue sync for a single book
 - `openwebui:rebuild-book {bookId}` - Rebuild a single book (delete & re-upload)
 - `openwebui:test-connection` - Test OpenWebUI connectivity
+- `openwebui:clear-queue` - Clear queued sync tasks (defaults to pending/failed)
 - `openwebui:install` - Run only this package's migrations (optional publish flags)
 - `openwebui:uninstall` - Roll back and remove package tables (with safety flags)
 
@@ -89,6 +103,7 @@ To prevent overlapping runs (e.g., if a queue run takes longer than a minute), u
 - Pages and attachments are uploaded as files into the matching knowledge base.
 - Identity is stable across page renames by using `page_id` and `attachment_id` in external keys.
 - Deletes are propagated to OpenWebUI.
+- Optional workspace sync attaches all known knowledge bases to a single OpenWebUI model (workspace) and removes stale ones.
 
 ## Admin UI
 

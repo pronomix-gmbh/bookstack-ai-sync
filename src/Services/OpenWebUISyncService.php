@@ -42,6 +42,34 @@ class OpenWebUISyncService
         return $value ? (string) $value : 'bookstack';
     }
 
+    public function workspaceEnabled(): bool
+    {
+        return (bool) $this->settings->get(
+            'workspace_enabled',
+            config('bookstack-openwebui.workspace.enabled', true)
+        );
+    }
+
+    public function workspaceModelId(): string
+    {
+        $value = (string) $this->settings->get(
+            'workspace_model_id',
+            config('bookstack-openwebui.workspace.model_id', '')
+        );
+
+        return $value !== '' ? $value : $this->instanceName();
+    }
+
+    public function workspaceModelName(): string
+    {
+        $value = (string) $this->settings->get(
+            'workspace_model_name',
+            config('bookstack-openwebui.workspace.model_name', '')
+        );
+
+        return $value !== '' ? $value : $this->instanceName();
+    }
+
     public function knowledgeNameForBook(mixed $book): string
     {
         return $this->instanceName() . ':' . (string) ($book->name ?? 'book');
@@ -81,6 +109,7 @@ class OpenWebUISyncService
 
         $expectedName = $this->knowledgeNameForBook($book);
         $mapping = OpenWebUIKnowledgeMap::query()->where('book_id', $book->id)->first();
+        $shouldSyncWorkspace = false;
 
         $knowledge = $this->findKnowledge($mapping?->knowledge_id, $expectedName);
 
@@ -91,17 +120,23 @@ class OpenWebUISyncService
                 throw new \RuntimeException('OpenWebUI did not return a knowledge ID');
             }
             $knowledge = ['id' => $knowledgeId, 'name' => $expectedName];
+            $shouldSyncWorkspace = true;
         }
 
         if (!$mapping) {
             $mapping = new OpenWebUIKnowledgeMap();
             $mapping->book_id = $book->id;
+            $shouldSyncWorkspace = true;
         }
 
         $mapping->book_slug = $book->slug ?? null;
         $mapping->knowledge_id = (string) Arr::get($knowledge, 'id');
         $mapping->knowledge_name = (string) Arr::get($knowledge, 'name', $expectedName);
         $mapping->save();
+
+        if ($shouldSyncWorkspace) {
+            $this->syncWorkspaceKnowledge();
+        }
 
         return $mapping;
     }
@@ -287,6 +322,8 @@ class OpenWebUISyncService
         if ($knowledgeMap) {
             $knowledgeMap->delete();
         }
+
+        $this->syncWorkspaceKnowledge();
     }
 
     public function rebuildBook(int $bookId): void
@@ -365,6 +402,10 @@ class OpenWebUISyncService
     {
         foreach ($this->bookStack->listBooks() as $book) {
             $this->enqueueTask(self::TASK_REBUILD_BOOK, ['book_id' => $book->id]);
+        }
+
+        if (OpenWebUIKnowledgeMap::query()->exists()) {
+            $this->syncWorkspaceKnowledge();
         }
     }
 
@@ -513,5 +554,155 @@ class OpenWebUISyncService
         }
 
         return $list;
+    }
+
+    private function syncWorkspaceKnowledge(): void
+    {
+        if (!$this->workspaceEnabled()) {
+            return;
+        }
+
+        $modelId = $this->workspaceModelId();
+        if ($modelId === '') {
+            return;
+        }
+
+        $model = $this->getOrCreateWorkspaceModel($modelId);
+        if (!$model) {
+            return;
+        }
+
+        $desiredIds = OpenWebUIKnowledgeMap::query()
+            ->pluck('knowledge_id')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $knowledgeItems = $this->collectKnowledgeItems($desiredIds);
+
+        $meta = Arr::get($model, 'meta', []);
+        if (!is_array($meta)) {
+            $meta = [];
+        }
+        $meta['knowledge'] = $knowledgeItems;
+
+        $payload = $this->buildModelPayload($modelId, $model, $meta);
+        $this->client->updateModel($payload);
+    }
+
+    private function collectKnowledgeItems(array $knowledgeIds): array
+    {
+        if (empty($knowledgeIds)) {
+            return [];
+        }
+
+        $lookup = [];
+        foreach ($this->client->listKnowledge() as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $id = (string) Arr::get($entry, 'id');
+            if ($id !== '') {
+                $lookup[$id] = $entry;
+            }
+        }
+
+        $items = [];
+        foreach ($knowledgeIds as $id) {
+            if (isset($lookup[$id])) {
+                $items[] = $lookup[$id];
+                continue;
+            }
+            $entry = $this->client->getKnowledge((string) $id);
+            if (is_array($entry)) {
+                $items[] = $entry;
+            }
+        }
+
+        usort($items, function (array $a, array $b): int {
+            return strcmp((string) Arr::get($a, 'name'), (string) Arr::get($b, 'name'));
+        });
+
+        return $items;
+    }
+
+    private function getOrCreateWorkspaceModel(string $modelId): ?array
+    {
+        $model = $this->client->getModel($modelId);
+        if (is_array($model)) {
+            return $model;
+        }
+
+        $meta = [
+            'description' => 'Workspace for ' . $this->instanceName(),
+            'knowledge' => [],
+        ];
+
+        $payload = [
+            'id' => $modelId,
+            'name' => $this->workspaceModelName(),
+            'base_model_id' => null,
+            'params' => (object) [],
+            'meta' => $meta,
+            'access_control' => null,
+            'is_active' => true,
+        ];
+
+        try {
+            $created = $this->client->createModel($payload);
+        } catch (RequestException $e) {
+            $status = $e->response?->status();
+            if ($status === 409) {
+                return $this->client->getModel($modelId);
+            }
+            throw $e;
+        }
+
+        return is_array($created) ? $created : null;
+    }
+
+    private function buildModelPayload(string $modelId, array $model, array $meta): array
+    {
+        $name = (string) Arr::get($model, 'name', $this->workspaceModelName());
+        if ($name === '') {
+            $name = $modelId;
+        }
+
+        return [
+            'id' => $modelId,
+            'name' => $name,
+            'base_model_id' => Arr::get($model, 'base_model_id'),
+            'params' => $this->normalizeModelParams(Arr::get($model, 'params')),
+            'meta' => $meta,
+            'access_control' => $this->normalizeModelObject(Arr::get($model, 'access_control')),
+            'is_active' => (bool) Arr::get($model, 'is_active', true),
+        ];
+    }
+
+    private function normalizeModelParams(mixed $value): object
+    {
+        if (is_array($value)) {
+            return (object) $value;
+        }
+
+        if (is_object($value)) {
+            return $value;
+        }
+
+        return (object) [];
+    }
+
+    private function normalizeModelObject(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            return (object) $value;
+        }
+
+        if (is_object($value) || $value === null) {
+            return $value;
+        }
+
+        return (object) [];
     }
 }

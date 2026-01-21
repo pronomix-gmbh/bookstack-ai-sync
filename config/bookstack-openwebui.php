@@ -18,7 +18,18 @@ return [
             'knowledge_file_add' => '/api/v1/knowledge/{id}/file/add',
             'file_delete' => '/api/v1/files/{id}',
             'knowledge_delete' => '/api/v1/knowledge/{id}/delete',
+            'knowledge_get' => '/api/v1/knowledge/{id}',
+            'model_list' => '/api/v1/models/list',
+            'model_get' => '/api/v1/models/model',
+            'model_create' => '/api/v1/models/create',
+            'model_update' => '/api/v1/models/model/update',
         ],
+    ],
+
+    'workspace' => [
+        'enabled' => env('OPENWEBUI_WORKSPACE_ENABLED', true),
+        'model_id' => env('OPENWEBUI_WORKSPACE_MODEL_ID', ''),
+        'model_name' => env('OPENWEBUI_WORKSPACE_MODEL_NAME', ''),
     ],
 
     'queue' => [

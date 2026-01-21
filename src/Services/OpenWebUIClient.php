@@ -47,6 +47,72 @@ class OpenWebUIClient
         return $response->json() ?? [];
     }
 
+    public function getKnowledge(string $knowledgeId): ?array
+    {
+        $response = $this->request()->get($this->path('knowledge_get', $knowledgeId));
+        if ($response->status() === 404) {
+            return null;
+        }
+        $response->throw();
+
+        $data = $response->json();
+        return is_array($data) ? $data : null;
+    }
+
+    public function listModels(): array
+    {
+        $response = $this->request()->get($this->path('model_list'));
+        $response->throw();
+
+        $data = $response->json();
+
+        if (!is_array($data)) {
+            return [];
+        }
+
+        if (Arr::has($data, 'items') && is_array($data['items'])) {
+            return $data['items'];
+        }
+
+        if (Arr::has($data, 'data') && is_array($data['data'])) {
+            return $data['data'];
+        }
+
+        return $data;
+    }
+
+    public function getModel(string $modelId): ?array
+    {
+        $response = $this->request()->get($this->path('model_get'), [
+            'id' => $modelId,
+        ]);
+
+        if ($response->status() === 404) {
+            return null;
+        }
+
+        $response->throw();
+
+        $data = $response->json();
+        return is_array($data) ? $data : null;
+    }
+
+    public function createModel(array $payload): array
+    {
+        $response = $this->request()->post($this->path('model_create'), $payload);
+        $response->throw();
+
+        return $response->json() ?? [];
+    }
+
+    public function updateModel(array $payload): array
+    {
+        $response = $this->request()->post($this->path('model_update'), $payload);
+        $response->throw();
+
+        return $response->json() ?? [];
+    }
+
     public function uploadFile(string $filename, mixed $contents): array
     {
         $response = $this->request()

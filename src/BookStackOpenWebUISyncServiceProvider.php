@@ -7,6 +7,7 @@ namespace Pronomix\BookStackOpenWebUISync;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Route;
 use Pronomix\BookStackOpenWebUISync\Console\Commands\InstallCommand;
+use Pronomix\BookStackOpenWebUISync\Console\Commands\ClearQueueCommand;
 use Pronomix\BookStackOpenWebUISync\Console\Commands\ProcessQueueCommand;
 use Pronomix\BookStackOpenWebUISync\Console\Commands\RebuildBookCommand;
 use Pronomix\BookStackOpenWebUISync\Console\Commands\SyncAllCommand;
@@ -43,6 +44,7 @@ class BookStackOpenWebUISyncServiceProvider extends ServiceProvider
 
         if ($this->app->runningInConsole()) {
             $this->commands([
+                ClearQueueCommand::class,
                 InstallCommand::class,
                 ProcessQueueCommand::class,
                 SyncAllCommand::class,
