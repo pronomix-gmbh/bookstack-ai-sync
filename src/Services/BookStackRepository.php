@@ -11,12 +11,12 @@ use Illuminate\Support\Str;
 class BookStackRepository
 {
     private const ATTACHMENT_MODEL_CLASSES = [
-        'BookStack\\Uploads\\Attachment',
         'BookStack\\Entities\\Models\\Attachment',
+        'BookStack\\Uploads\\Attachment',
     ];
     private const IMAGE_MODEL_CLASSES = [
-        'BookStack\\Uploads\\Image',
         'BookStack\\Entities\\Models\\Image',
+        'BookStack\\Uploads\\Image',
     ];
 
     public function getBookById(int $bookId): mixed

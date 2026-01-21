@@ -69,17 +69,15 @@ class BookStackOpenWebUISyncServiceProvider extends ServiceProvider
             \BookStack\Entities\Models\Page::observe(PageObserver::class);
         }
 
-        foreach (['BookStack\\Uploads\\Attachment', 'BookStack\\Entities\\Models\\Attachment'] as $class) {
+        foreach (['BookStack\\Entities\\Models\\Attachment', 'BookStack\\Uploads\\Attachment'] as $class) {
             if (class_exists($class)) {
                 $class::observe(AttachmentObserver::class);
-                break;
             }
         }
 
-        foreach (['BookStack\\Uploads\\Image', 'BookStack\\Entities\\Models\\Image'] as $class) {
+        foreach (['BookStack\\Entities\\Models\\Image', 'BookStack\\Uploads\\Image'] as $class) {
             if (class_exists($class)) {
                 $class::observe(ImageObserver::class);
-                break;
             }
         }
     }
