@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Pronomix\BookStackOpenWebUISync\Services;
 
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class BookStackRepository
@@ -350,11 +349,6 @@ class BookStackRepository
             return [$content, $this->attachmentFilename($attachment)];
         }
 
-        $disk = $attachment->disk ?? null;
-        if (!$disk) {
-            $disk = config('filesystems.disks.uploads') ? 'uploads' : config('filesystems.default');
-        }
-
         if (!$path && method_exists($attachment, 'getFilePath')) {
             $path = $attachment->getFilePath();
         }
@@ -363,18 +357,12 @@ class BookStackRepository
             throw new \RuntimeException('Attachment path not found');
         }
 
-        if (Str::startsWith($path, ['/','C:\\','D:\\'])) {
-            $stream = fopen($path, 'rb');
-            return [$stream, basename($path)];
-        }
-
-        $stream = Storage::disk($disk)->readStream($path);
-
+        $stream = $this->openBookStackReadStream($path);
         if (!$stream) {
             throw new \RuntimeException('Unable to open attachment stream');
         }
 
-        return [$stream, basename($path)];
+        return [$stream, $this->attachmentFilename($attachment)];
     }
 
     public function resolveImageStream(mixed $image): array
@@ -386,22 +374,7 @@ class BookStackRepository
             throw new \RuntimeException('Image path not found');
         }
 
-        if (Str::startsWith($path, ['/', 'C:\\', 'D:\\'])) {
-            $stream = fopen($path, 'rb');
-            return [$stream, $filename];
-        }
-
-        $disk = $image->disk ?? null;
-        if (!$disk) {
-            $disk = config('filesystems.disks.uploads') ? 'uploads' : config('filesystems.default');
-        }
-
-        $stream = Storage::disk($disk)->readStream($path);
-
-        if (!$stream && isset($image->url) && is_string($image->url) && Str::startsWith($image->url, ['http://', 'https://'])) {
-            $stream = fopen($image->url, 'rb');
-        }
-
+        $stream = $this->openBookStackReadStream($path);
         if (!$stream) {
             throw new \RuntimeException('Unable to open image stream');
         }
@@ -440,6 +413,28 @@ class BookStackRepository
         }
 
         return 'image';
+    }
+
+    private function openBookStackReadStream(string $path): mixed
+    {
+        if (!function_exists('app')) {
+            return null;
+        }
+
+        if (!class_exists('BookStack\\Uploads\\FileStorage')) {
+            return null;
+        }
+
+        try {
+            $storage = app(\BookStack\Uploads\FileStorage::class);
+            if (method_exists($storage, 'getReadStream')) {
+                return $storage->getReadStream($path);
+            }
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return null;
     }
 
     private function attachmentModelClass(): ?string
