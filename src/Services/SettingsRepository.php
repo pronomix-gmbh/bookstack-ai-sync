@@ -63,9 +63,13 @@ class SettingsRepository
         OpenWebUISetting::query()->where('key', $fullKey)->delete();
     }
 
-    private function maybeDecrypt(string $value, bool $decrypt): mixed
+    private function maybeDecrypt(mixed $value, bool $decrypt): mixed
     {
         if (!$decrypt) {
+            return $value;
+        }
+
+        if (!is_string($value)) {
             return $value;
         }
 
