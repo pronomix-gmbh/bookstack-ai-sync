@@ -261,6 +261,16 @@ class OpenWebUIClient
             $path = str_replace('{id}', $id, $path);
         }
 
+        $baseUrl = (string) config('bookstack-openwebui.openwebui.base_url');
+        $basePath = parse_url($baseUrl, PHP_URL_PATH);
+        if (is_string($basePath)) {
+            $basePath = rtrim($basePath, '/');
+            if ($basePath !== '' && $basePath !== '/' && str_starts_with($path, $basePath)) {
+                $path = substr($path, strlen($basePath));
+                $path = $path !== '' ? $path : '/';
+            }
+        }
+
         return $path;
     }
 }

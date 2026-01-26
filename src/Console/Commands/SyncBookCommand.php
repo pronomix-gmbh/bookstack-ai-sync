@@ -49,7 +49,12 @@ class SyncBookCommand extends Command
         }
 
         $bookId = (int) $bookId;
-        $knowledge = $sync->ensureKnowledgeForBook($bookId);
+        try {
+            $knowledge = $sync->ensureKnowledgeForBook($bookId);
+        } catch (\Throwable $e) {
+            $this->error('OpenWebUI API error: ' . $e->getMessage());
+            return Command::FAILURE;
+        }
         if (!$knowledge) {
             $this->error('Book not found.');
             return Command::FAILURE;
