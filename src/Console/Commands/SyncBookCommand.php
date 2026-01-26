@@ -49,6 +49,11 @@ class SyncBookCommand extends Command
         }
 
         $bookId = (int) $bookId;
+        $knowledge = $sync->ensureKnowledgeForBook($bookId);
+        if (!$knowledge) {
+            $this->error('Book not found.');
+            return Command::FAILURE;
+        }
         $sync->enqueueSyncBook($bookId);
 
         $this->info('Sync tasks enqueued for book ' . $bookId . '.');
